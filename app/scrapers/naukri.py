@@ -6,7 +6,7 @@ import re
 from urllib.parse import quote
 
 from ..textutil import html_to_text, parse_date, parse_label_experience, sanitize_html
-from .base import UA, Blocked, Scraper
+from .base import STEALTH_INIT_SCRIPT, UA, Blocked, Scraper, launch_browser
 
 
 def _slug(s):
@@ -18,28 +18,6 @@ def _job_age(days):
         if days <= v:
             return v
     return 30
-
-
-def _launch(p, headless):
-    args = [
-        "--disable-blink-features=AutomationControlled",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-    ]
-    last = None
-    for channel in ("chrome", "msedge", None):
-        try:
-            kw = {"headless": headless, "args": args}
-            if channel:
-                kw["channel"] = channel
-            return p.chromium.launch(**kw)
-        except Exception as e:
-            last = e
-    raise RuntimeError(f"Could not start Chrome or Edge for Naukri: {last}")
 
 
 class Naukri(Scraper):
@@ -86,14 +64,9 @@ class Naukri(Scraper):
         seen = set()
         captcha_hits = 0
         with sync_playwright() as p:
-            browser = _launch(p, headless)
+            browser = launch_browser(p, headless)
             context = browser.new_context(user_agent=UA, viewport={"width": 1366, "height": 900}, locale="en-IN")
-            context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                window.navigator.chrome = { runtime: {} };
-                Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en-US', 'en'] });
-                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-            """)
+            context.add_init_script(STEALTH_INIT_SCRIPT)
             page = context.new_page()
             page.route(re.compile(r"\.(png|jpg|jpeg|gif|webp)(\?|$)"), lambda r: r.abort())
 
@@ -144,17 +117,60 @@ class Naukri(Scraper):
                         ctx.progress(done, total)
                         if captcha_hits >= 3:
                             raise Blocked("Naukri asked for a captcha. Turn off 'Naukri headless' in Settings and run again.")
-                        if not data:
-                            continue
-                        jobs = data.get("jobDetails") or []
-                        for d in jobs:
-                            if not d.get("jobId") or d["jobId"] in seen:
-                                continue
-                            seen.add(d["jobId"])
-                            ctx.emit(self.normalize(d, q))
-                        if len(jobs) < 20:
-                            done += pages - n
-                            break
+                        
+                        jobs = (data.get("jobDetails") or []) if data else []
+                        if jobs:
+                            for d in jobs:
+                                if not d.get("jobId") or d["jobId"] in seen:
+                                    continue
+                                seen.add(d["jobId"])
+                                ctx.emit(self.normalize(d, q))
+                            if len(jobs) < 20:
+                                done += pages - n
+                                break
+                        else:
+                            # DOM fallback: parse job cards directly from the rendered HTML
+                            try:
+                                from bs4 import BeautifulSoup
+                                soup = BeautifulSoup(page.content(), "html.parser")
+                                tuples = soup.select(".srp-jobtuple-wrapper") or soup.select(".cust-job-tuple") or soup.select("article.jobTuple")
+                                dom_found = 0
+                                for t in tuples:
+                                    a = t.select_one("a.title") or t.select_one(".title")
+                                    if not a or not a.get("href"):
+                                        continue
+                                    href = a.get("href")
+                                    m = re.search(r"-([0-9]{10,14})(?:\?|$)", href)
+                                    jid = m.group(1) if m else None
+                                    if not jid or jid in seen:
+                                        continue
+                                    comp = t.select_one(".comp-name") or t.select_one("a.subTitle")
+                                    loc_el = t.select_one(".loc-wrap") or t.select_one(".location")
+                                    exp_el = t.select_one(".exp-wrap") or t.select_one(".experience")
+                                    desc_el = t.select_one(".job-desc") or t.select_one(".job-description")
+                                    tags = [tag.get_text(strip=True) for tag in t.select(".tags-gt li, .dot-gt li, .tag-li")]
+                                    raw_desc = desc_el.get_text(" ", strip=True) if desc_el else ""
+                                    lo, hi = parse_label_experience(exp_el.get_text(strip=True) if exp_el else "")
+                                    loc_str = loc_el.get_text(" ", strip=True) if loc_el else (loc or "")
+                                    seen.add(jid)
+                                    dom_found += 1
+                                    ctx.emit({
+                                        "source": self.key, "source_id": str(jid), "url": href, "apply_url": href,
+                                        "title": a.get_text(" ", strip=True),
+                                        "company": comp.get_text(" ", strip=True) if comp else "",
+                                        "company_logo": None,
+                                        "location": loc_str,
+                                        "remote": bool(re.search(r"remote|work from home|wfh", loc_str, re.I)),
+                                        "salary": None, "posted_at": None,
+                                        "description_html": sanitize_html(raw_desc), "description_text": raw_desc,
+                                        "tags": tags, "exp_min": lo, "exp_max": hi, "exp_source": "naukri" if lo is not None else None,
+                                        "query": q, "detail_fetched": 1,
+                                    })
+                                if dom_found < 20 and n > 1:
+                                    done += pages - n
+                                    break
+                            except Exception as e:
+                                ctx.log(f"Naukri DOM parse error: {str(e)[:60]}")
                         page.wait_for_timeout(1000)
             finally:
                 browser.close()

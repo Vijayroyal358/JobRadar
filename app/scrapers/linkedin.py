@@ -1,12 +1,12 @@
-"""LinkedIn public (guest) job search. No login needed."""
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from bs4 import BeautifulSoup
 
 from ..textutil import html_to_text, sanitize_html
-from .base import Blocked, Scraper
+from .base import STEALTH_INIT_SCRIPT, UA, Blocked, Scraper, launch_browser
 
 SEARCH = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 DETAIL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{}"
@@ -101,6 +101,73 @@ class LinkedIn(Scraper):
                 d["apply_url"] = unquote(qs["url"][0]) if "url" in qs else link
         return d
 
+    def _search_browser(self, ctx, plan, cards):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            ctx.log("LinkedIn: Playwright not installed, skipping browser search.")
+            return
+        headless = bool(ctx.profile.get("linkedin_headless", True))
+        try:
+            with sync_playwright() as p:
+                browser = launch_browser(p, headless)
+                context = browser.new_context(user_agent=UA, viewport={"width": 1366, "height": 900}, locale="en-IN")
+                context.add_init_script(STEALTH_INIT_SCRIPT)
+                page = context.new_page()
+                page.route(re.compile(r"\.(png|jpg|jpeg|gif|webp)(\?|$)"), lambda r: r.abort())
+                try:
+                    for q, loc, remote in plan:
+                        if ctx.stopped:
+                            return
+                        url = f"https://www.linkedin.com/jobs/search?keywords={quote(q)}"
+                        if loc:
+                            url += f"&location={quote(loc)}"
+                        if remote:
+                            url += "&f_WT=2"
+                        url += f"&f_TPR=r{ctx.days * 86400}"
+                        lv = _exp_levels(ctx.profile.get("years_experience"))
+                        if lv:
+                            url += f"&f_E={quote(lv)}"
+                        try:
+                            page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                            page.wait_for_timeout(2000)
+                            soup = BeautifulSoup(page.content(), "html.parser")
+                            lis = soup.select("ul.jobs-search__results-list li") or soup.select("div.base-card")
+                            for li in lis:
+                                a = li.select_one("a.base-card__full-link") or li.select_one("a")
+                                if not a or not a.get("href"):
+                                    continue
+                                href = a.get("href")
+                                m = re.search(r"-([0-9]{8,15})(?:\?|$)", href)
+                                if not m:
+                                    m = re.search(r"/view/([0-9]{8,15})", href)
+                                jid = m.group(1) if m else None
+                                if not jid or jid in cards:
+                                    continue
+                                t = li.select_one("h3.base-search-card__title") or li.select_one("h3") or a
+                                c = li.select_one("h4.base-search-card__subtitle") or li.select_one("h4")
+                                loc_el = li.select_one(".job-search-card__location")
+                                tm = li.select_one("time")
+                                clean_url = f"https://www.linkedin.com/jobs/view/{jid}"
+                                title = t.get_text(" ", strip=True) if t else ""
+                                comp = c.get_text(" ", strip=True) if c else ""
+                                loc_str = loc_el.get_text(" ", strip=True) if loc_el else (loc or "")
+                                cards[jid] = {
+                                    "source": self.key, "source_id": jid, "url": clean_url, "apply_url": clean_url,
+                                    "title": title, "company": comp, "company_logo": None,
+                                    "location": loc_str,
+                                    "remote": remote or bool(re.search(r"remote", loc_str or "", re.I)),
+                                    "posted_at": tm.get("datetime") if tm else None,
+                                    "query": q,
+                                    "detail_fetched": 0,
+                                }
+                        except Exception as e:
+                            ctx.log(f"LinkedIn browser query warning for '{q}': {str(e)[:60]}")
+                finally:
+                    browser.close()
+        except Exception as e:
+            ctx.log(f"LinkedIn browser search error: {str(e)[:80]}")
+
     def run(self, ctx):
         pages = int(ctx.profile.get("linkedin_pages") or 3)
         max_details = int(ctx.profile.get("linkedin_details") or 150)
@@ -113,26 +180,42 @@ class LinkedIn(Scraper):
             for q in ctx.queries[:3]:
                 if (q, country, False) not in plan:
                     plan.append((q, country, True))
+
         total_steps = len(plan) * pages + max_details
         done = 0
         cards = {}
-        for q, loc, remote in plan:
-            for p in range(pages):
+        use_browser_direct = bool(os.environ.get("DOCKER_CONTAINER"))
+
+        if use_browser_direct:
+            ctx.log("LinkedIn: Using browser search for cloud container environment")
+            self._search_browser(ctx, plan, cards)
+            done = len(plan) * pages
+            ctx.progress(done, total_steps)
+        else:
+            throttled = False
+            for q, loc, remote in plan:
                 if ctx.stopped:
                     return
-                try:
-                    batch = self._search(ctx, q, loc, p * 25, remote)
-                except Blocked as e:
-                    ctx.log(f"LinkedIn search throttled ({e}); continuing with what was found")
-                    done += pages - p
+                for p in range(pages):
+                    try:
+                        batch = self._search(ctx, q, loc, p * 25, remote)
+                    except Blocked as e:
+                        ctx.log(f"LinkedIn guest API throttled ({e}); switching to browser search...")
+                        throttled = True
+                        break
+                    done += 1
+                    ctx.progress(done, total_steps)
+                    for j in batch:
+                        cards.setdefault(j["source_id"], j)
+                    if len(batch) < 10:
+                        done += pages - p - 1
+                        break
+                if throttled:
+                    self._search_browser(ctx, plan, cards)
+                    done = len(plan) * pages
+                    ctx.progress(done, total_steps)
                     break
-                done += 1
-                ctx.progress(done, total_steps)
-                for j in batch:
-                    cards.setdefault(j["source_id"], j)
-                if len(batch) < 10:
-                    done += pages - p - 1
-                    break
+
         ctx.log(f"LinkedIn: {len(cards)} unique postings from {len(plan)} searches")
 
         ranked = sorted(cards.values(), key=lambda j: ctx.prioritize(j["title"], ""), reverse=True)
@@ -161,4 +244,4 @@ class LinkedIn(Scraper):
                 ctx.progress(done, total_steps)
                 ctx.emit(job)
         if blocked["hit"] >= 3:
-            ctx.log("LinkedIn started rate limiting detail pages. Remaining descriptions load when you open a job.")
+            ctx.log("LinkedIn rate limited detailed descriptions. Basic job info emitted; details load on demand.")

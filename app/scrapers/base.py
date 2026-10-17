@@ -5,8 +5,42 @@ import time
 
 import requests
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-      "Chrome/128.0.0.0 Safari/537.36")
+import sys
+
+if sys.platform.startswith("linux"):
+    UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+else:
+    UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+if (!window.chrome) { window.chrome = {}; }
+window.chrome.runtime = {};
+Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en-US', 'en'] });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+"""
+
+
+def launch_browser(p, headless=True):
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+    ]
+    last = None
+    for channel in ("chrome", "msedge", None):
+        try:
+            kw = {"headless": headless, "args": args}
+            if channel:
+                kw["channel"] = channel
+            return p.chromium.launch(**kw)
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"Could not start Chromium browser: {last}")
 
 
 class Blocked(Exception):
