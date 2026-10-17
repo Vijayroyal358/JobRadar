@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  jobradar:
+    build: .
+    container_name: jobradar
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=8765
+      - JOBRADAR_HOST=0.0.0.0
+    restart: unless-stopped

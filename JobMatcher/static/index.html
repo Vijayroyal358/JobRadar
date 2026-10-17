@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JobRadar</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%234f46e5'/><circle cx='16' cy='16' r='8' fill='none' stroke='white' stroke-width='2.5'/><circle cx='16' cy='16' r='2.5' fill='white'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" class="logo"><circle cx="16" cy="16" r="14" fill="var(--accent)"/><circle cx="16" cy="16" r="8" fill="none" stroke="#fff" stroke-width="2.5"/><circle cx="16" cy="16" r="2.5" fill="#fff"/></svg>
+    <div>
+      <div class="brand-name">JobRadar</div>
+      <div class="brand-sub">Jobs matched to your resume</div>
+    </div>
+  </div>
+  <div class="top-actions">
+    <span id="lastRun" class="muted small"></span>
+    <button id="btnFind" class="btn primary"><span class="ico" data-i="radar"></span><span>Find jobs</span></button>
+    <button id="btnStop" class="btn danger hidden"><span class="ico" data-i="stop"></span><span>Stop</span></button>
+    <button id="btnTheme" class="btn icon ghost" title="Toggle theme"><span class="ico" data-i="moon"></span></button>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- ======================= PROFILE SIDEBAR ======================= -->
+  <aside class="sidebar" id="sidebar">
+    <nav class="side-nav" id="sideNav">
+      <button data-panel="profile" class="on"><span class="ico" data-i="user"></span>Profile</button>
+      <button data-panel="ai"><span class="ico" data-i="sparkles"></span>AI settings <span id="aiNavDot" class="nav-dot hidden" title="No API key saved"></span></button>
+      <button data-panel="apply"><span class="ico" data-i="send"></span>Apply <span id="applyNavDot" class="nav-dot hidden" title="Application profile incomplete"></span></button>
+    </nav>
+
+    <section class="card side-panel" id="panelProfile">
+      <div class="card-head">
+        <h2>Your profile</h2>
+        <span id="dirty" class="pill warn hidden">Unsaved</span>
+      </div>
+
+      <label id="drop" class="dropzone">
+        <input type="file" id="resumeFile" accept=".pdf,.docx,.txt" hidden>
+        <span class="ico big" data-i="upload"></span>
+        <div>
+          <div id="resumeName" class="strong">Upload your resume</div>
+          <div id="resumeHint" class="muted small">PDF, DOCX or TXT. Drop it here or click.</div>
+        </div>
+      </label>
+
+      <div class="field">
+        <label>Name</label>
+        <input id="pName" type="text" placeholder="Your name">
+      </div>
+      <div class="field">
+        <label>Current position</label>
+        <input id="pTitle" type="text" placeholder="e.g. Senior Software Engineer">
+      </div>
+      <div class="field">
+        <label>Total experience (years) <span id="yearsHint" class="muted small"></span></label>
+        <input id="pYears" type="number" min="0" max="50" step="0.5" placeholder="e.g. 5">
+      </div>
+
+      <div class="field">
+        <label>Skills <span id="skillCount" class="muted small"></span></label>
+        <div class="chips editable" id="skillsChips"></div>
+        <input id="skillInput" list="skillList" type="text" placeholder="Add a skill and press Enter">
+        <datalist id="skillList"></datalist>
+      </div>
+
+      <div class="field">
+        <label>Target roles <span class="muted small">used as search keywords</span></label>
+        <div class="chips editable" id="rolesChips"></div>
+        <input id="roleInput" list="roleList" type="text" placeholder="Add a role and press Enter">
+        <datalist id="roleList"></datalist>
+        <div class="chips suggest" id="roleSuggest"></div>
+      </div>
+
+      <div class="field">
+        <label>Search locations</label>
+        <div class="chips editable" id="locChips"></div>
+        <input id="locInput" type="text" placeholder="City or country, press Enter">
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label>Your country</label>
+          <input id="pCountry" type="text" placeholder="India">
+        </div>
+        <div class="field">
+          <label>Posted within</label>
+          <select id="pDays">
+            <option value="1">24 hours</option><option value="3">3 days</option><option value="7">7 days</option>
+            <option value="14">14 days</option><option value="30">30 days</option>
+          </select>
+        </div>
+      </div>
+      <label class="switch"><input id="pRemote" type="checkbox"><span></span>Include remote jobs</label>
+
+      <details class="sub">
+        <summary>Job sources</summary>
+        <div id="sourcesList" class="sources-list"></div>
+        <label class="switch small"><input id="pHeadless" type="checkbox"><span></span>Run Naukri browser hidden</label>
+      </details>
+
+      <details class="sub">
+        <summary>Advanced</summary>
+        <div class="row2">
+          <div class="field"><label>Max search queries</label><input id="aQueries" type="number" min="1" max="15"></div>
+          <div class="field"><label>Minimum match % shown</label><input id="aMin" type="number" min="0" max="100"></div>
+          <div class="field"><label>LinkedIn pages / query</label><input id="aLiPages" type="number" min="1" max="10"></div>
+          <div class="field"><label>LinkedIn full JDs</label><input id="aLiDetails" type="number" min="0" max="500"></div>
+          <div class="field"><label>Naukri pages / query</label><input id="aNkPages" type="number" min="1" max="10"></div>
+        </div>
+        <button id="btnClear" class="btn ghost small danger-text">Clear stored jobs (keeps saved and applied)</button>
+      </details>
+
+      <div class="queries" id="queriesPreview"></div>
+      <button id="btnSave" class="btn primary block">Save and re-score</button>
+    </section>
+
+    <!-- ======================= AI SETTINGS PANEL ======================= -->
+    <section class="card side-panel hidden" id="panelAi">
+      <div class="card-head">
+        <h2>AI resume tailoring</h2>
+        <span id="aiState" class="pill src">Not set up</span>
+      </div>
+      <p class="muted small ai-intro">Add an API key, then use <b>Tailor resume</b> on any job. The AI rewrites your summary, skills and
+        experience bullets to match that job description and keeps your resume's layout. Keys are stored only in the local
+        <code>data</code> folder.</p>
+
+      <div class="field">
+        <label>Provider used for tailoring</label>
+        <div class="provider-tabs" id="aiProviderTabs"></div>
+      </div>
+
+      <div id="aiProviderForm">
+        <div class="field">
+          <label>API key <span id="aiKeyStatus" class="muted small"></span></label>
+          <div class="key-row">
+            <input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your API key">
+            <button id="aiKeyToggle" class="btn icon ghost" type="button" title="Show or hide"><span class="ico" data-i="eye"></span></button>
+          </div>
+          <div class="key-actions"><button id="aiKeyRemove" class="btn ghost small danger-text hidden" type="button">Remove saved key</button></div>
+        </div>
+        <div class="field">
+          <label>Model</label>
+          <input id="aiModel" type="text" list="aiModelList" autocomplete="off" placeholder="Model name">
+          <datalist id="aiModelList"></datalist>
+        </div>
+        <div class="field hidden" id="aiBaseUrlField">
+          <label>Base URL</label>
+          <input id="aiBaseUrl" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
+        </div>
+        <div id="aiHelp" class="muted small ai-help"></div>
+      </div>
+
+      <div id="aiTestResult" class="callout hidden"></div>
+      <div class="row2 ai-actions">
+        <button id="btnAiTest" class="btn">Test connection</button>
+        <button id="btnAiSave" class="btn primary">Save AI settings</button>
+      </div>
+
+      <details class="sub">
+        <summary>What the AI receives</summary>
+        <div class="muted small">
+          The job title, company and description, plus the text of your uploaded resume split into numbered lines.
+          It returns replacement text for the lines it improves. Names, contact details, dates, education and
+          section headings are never changed. DOCX resumes keep their exact styling; PDF resumes are rebuilt as DOCX.
+        </div>
+      </details>
+    </section>
+
+    <!-- ======================= APPLY PANEL ======================= -->
+    <section class="card side-panel hidden" id="panelApply">
+      <div class="card-head">
+        <h2>Apply assistant</h2>
+        <span id="applyState" class="pill src">Not set up</span>
+      </div>
+      <p class="muted small ai-intro">Select jobs and click <b>Apply</b>. A browser window opens on each application, fills the form from
+        the details below, attaches your tailored resume and answers screening questions from your saved answers or the AI.
+        <b>You always press Submit.</b></p>
+
+      <div class="row2">
+        <div class="field"><label>First name</label><input id="ap_first_name" type="text"></div>
+        <div class="field"><label>Last name</label><input id="ap_last_name" type="text"></div>
+      </div>
+      <div class="field"><label>Email</label><input id="ap_email" type="text" placeholder="you@example.com"></div>
+      <div class="row2 phone-row">
+        <div class="field"><label>Code</label><input id="ap_phone_code" type="text" placeholder="+91"></div>
+        <div class="field"><label>Phone</label><input id="ap_phone" type="text" placeholder="98765 43210"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>City</label><input id="ap_city" type="text"></div>
+        <div class="field"><label>Country</label><input id="ap_country" type="text"></div>
+      </div>
+      <div class="field"><label>LinkedIn URL</label><input id="ap_linkedin_url" type="text" placeholder="https://linkedin.com/in/you"></div>
+      <div class="row2">
+        <div class="field"><label>GitHub URL</label><input id="ap_github_url" type="text"></div>
+        <div class="field"><label>Portfolio / website</label><input id="ap_portfolio_url" type="text"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Current company</label><input id="ap_current_company" type="text"></div>
+        <div class="field"><label>Current title</label><input id="ap_current_title" type="text"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Years of experience</label><input id="ap_years_experience" type="number" min="0" max="50" step="0.5"></div>
+        <div class="field"><label>Notice period</label><input id="ap_notice_period" type="text" placeholder="30 days"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Current salary</label><input id="ap_current_salary" type="text" placeholder="e.g. 18 LPA"></div>
+        <div class="field"><label>Expected salary</label><input id="ap_expected_salary" type="text" placeholder="e.g. 24 LPA"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Authorized to work</label><select id="ap_work_authorized"><option value="yes">Yes</option><option value="no">No</option></select></div>
+        <div class="field"><label>Need visa sponsorship</label><select id="ap_needs_sponsorship"><option value="no">No</option><option value="yes">Yes</option></select></div>
+        <div class="field"><label>Willing to relocate</label><select id="ap_willing_to_relocate"><option value="yes">Yes</option><option value="no">No</option></select></div>
+        <div class="field"><label>Open to remote</label><select id="ap_remote_ok"><option value="yes">Yes</option><option value="no">No</option></select></div>
+      </div>
+      <div class="field">
+        <label>Cover letter / "why this role" <span class="muted small">{company} and {title} are replaced</span></label>
+        <textarea id="ap_cover_letter" rows="4" placeholder="A short paragraph the assistant can paste into cover letter boxes."></textarea>
+      </div>
+
+      <details class="sub">
+        <summary>Diversity and source questions (optional)</summary>
+        <div class="row2">
+          <div class="field"><label>Gender</label><input id="ap_eeo_gender" type="text" placeholder="Leave empty for 'prefer not to say'"></div>
+          <div class="field"><label>Pronouns</label><input id="ap_pronouns" type="text"></div>
+          <div class="field"><label>Race / ethnicity</label><input id="ap_eeo_race" type="text"></div>
+          <div class="field"><label>Veteran status</label><input id="ap_eeo_veteran" type="text"></div>
+          <div class="field"><label>Disability status</label><input id="ap_eeo_disability" type="text"></div>
+          <div class="field"><label>How did you hear about us</label><input id="ap_how_heard" type="text" placeholder="Job board"></div>
+        </div>
+      </details>
+
+      <details class="sub" open>
+        <summary>Behaviour</summary>
+        <div class="field">
+          <label>Resume to attach</label>
+          <select id="ap_resume_choice">
+            <option value="tailored">Tailored ATS-safe copy for that job, else my uploaded resume</option>
+            <option value="original">Always my uploaded resume</option>
+          </select>
+        </div>
+        <label class="switch small"><input id="ap_use_ai_answers" type="checkbox"><span></span>Let the AI draft answers to unknown questions (you review them)</label>
+        <label class="switch small" style="margin-top:8px"><input id="ap_auto_continue" type="checkbox"><span></span>Move through multi-step forms automatically</label>
+      </details>
+
+      <button id="btnApplySave" class="btn primary block">Save application profile</button>
+
+      <details class="sub">
+        <summary>Portal logins</summary>
+        <div class="muted small" style="margin-bottom:8px">Log in once in the assistant's browser; the session is kept in the <code>data</code> folder on this computer.</div>
+        <div class="row2 ai-actions">
+          <button class="btn small" data-login="linkedin">Log in to LinkedIn</button>
+          <button class="btn small" data-login="naukri">Log in to Naukri</button>
+        </div>
+      </details>
+
+      <details class="sub">
+        <summary>Saved answers <span id="answersCount" class="muted small"></span></summary>
+        <div class="muted small" style="margin-bottom:8px">Answers you approve are remembered and reused when the same question comes up again.</div>
+        <div id="answersList" class="answers"></div>
+        <div class="field"><input id="ansQ" type="text" placeholder="Question, e.g. Are you open to night shifts?"></div>
+        <div class="key-row"><input id="ansA" type="text" placeholder="Answer"><button id="btnAnsAdd" class="btn small">Add</button></div>
+      </details>
+    </section>
+  </aside>
+
+  <!-- ======================= MAIN ======================= -->
+  <main class="main">
+    <section id="progressPanel" class="card progress-card hidden">
+      <div class="card-head">
+        <div><h2 id="progressTitle">Searching job portals</h2><div id="progressSummary" class="muted small"></div></div>
+        <div style="display:flex;gap:6px">
+          <button id="btnDetails" class="btn ghost small">Details</button>
+          <button id="btnLog" class="btn ghost small">Show log</button>
+        </div>
+      </div>
+      <div id="sourceTiles" class="tiles"></div>
+      <pre id="logBox" class="log hidden"></pre>
+    </section>
+
+    <section id="applyPanel" class="card apply-card hidden">
+      <div class="card-head">
+        <div><h2>Apply assistant</h2><div id="applySummary" class="muted small"></div></div>
+        <div style="display:flex;gap:6px">
+          <button id="btnApplyClear" class="btn ghost small">Clear finished</button>
+          <button id="btnApplyStop" class="btn danger small hidden">Stop</button>
+        </div>
+      </div>
+      <div id="applyCurrent"></div>
+      <div id="applyQueue" class="apply-queue"></div>
+    </section>
+
+    <section class="stats" id="stats">
+      <div class="stat"><div class="stat-v" id="sMatched">0</div><div class="stat-l">Matched jobs</div></div>
+      <div class="stat high"><div class="stat-v" id="sHigh">0</div><div class="stat-l">High interview chance</div></div>
+      <div class="stat"><div class="stat-v" id="sNew">0</div><div class="stat-l">New this search</div></div>
+      <div class="stat"><div class="stat-v" id="sSaved">0</div><div class="stat-l">Saved</div></div>
+      <div class="stat"><div class="stat-v" id="sApplied">0</div><div class="stat-l">Applied</div></div>
+    </section>
+
+    <section class="toolbar card">
+      <div class="tabs" id="statusTabs">
+        <button data-s="active" class="on">Matches</button>
+        <button data-s="saved">Saved</button>
+        <button data-s="applied">Applied</button>
+        <button data-s="hidden">Hidden</button>
+        <button data-s="all">All</button>
+      </div>
+      <div class="filters">
+        <div class="search"><span class="ico" data-i="search"></span><input id="fQ" type="search" placeholder="Search title, company, skill"></div>
+        <div class="seg" id="fChance">
+          <button data-c="High">High</button><button data-c="Medium">Medium</button><button data-c="Low">Low</button>
+        </div>
+        <div class="dropdown" id="fSourcesDD">
+          <button class="btn ghost small" id="fSourcesBtn">All sources <span class="ico" data-i="chev"></span></button>
+          <div class="dd-menu" id="fSources"></div>
+        </div>
+        <select id="fRemote"><option value="all">Remote and onsite</option><option value="remote">Remote only</option><option value="onsite">Onsite / hybrid</option></select>
+        <select id="fDays"><option value="0">Any date</option><option value="1">Last 24h</option><option value="3">Last 3 days</option><option value="7">Last 7 days</option><option value="14">Last 14 days</option></select>
+        <select id="fSort"><option value="chance">Best interview chance</option><option value="match">Best match</option><option value="newest">Newest</option><option value="company">Company A-Z</option></select>
+        <label class="range">Match ≥ <b id="fMinV">35</b>%<input id="fMin" type="range" min="0" max="90" step="5" value="35"></label>
+        <label class="switch small"><input id="fExcl" type="checkbox"><span></span>Show excluded</label>
+        <a id="btnExport" class="btn ghost small" href="#"><span class="ico" data-i="download"></span>CSV</a>
+        <button id="btnApplyShown" class="btn ghost small" title="Queue every job currently listed"><span class="ico" data-i="send"></span>Apply to all shown</button>
+      </div>
+      <div id="selBar" class="sel-bar hidden">
+        <span><b id="selCount">0</b> selected</span>
+        <button id="btnApplySel" class="btn primary small"><span class="ico" data-i="send"></span>Apply to selected</button>
+        <button id="btnTailorSel" class="btn small"><span class="ico" data-i="sparkles"></span>Tailor resumes</button>
+        <button id="btnSelAll" class="btn ghost small">Select all shown</button>
+        <button id="btnSelNone" class="btn ghost small">Clear</button>
+      </div>
+    </section>
+
+    <div id="resultInfo" class="muted small result-info"></div>
+    <section id="jobs" class="jobs"></section>
+    <div class="center"><button id="btnMore" class="btn ghost hidden">Load more</button></div>
+  </main>
+</div>
+
+<!-- ======================= JD DRAWER ======================= -->
+<div id="overlay" class="overlay hidden"></div>
+<aside id="drawer" class="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <button id="btnClose" class="btn icon ghost" title="Close (Esc)"><span class="ico" data-i="x"></span></button>
+  </div>
+  <div id="drawerBody" class="drawer-body"></div>
+</aside>
+
+<div id="toasts" class="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
