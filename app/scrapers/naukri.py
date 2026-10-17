@@ -1,9 +1,14 @@
-"""Naukri.com via a real Chrome/Edge browser (Naukri blocks plain HTTP clients with a captcha).
+"""Naukri.com job search.
 
-The browser opens Naukri's normal search page and reads the JSON the page itself loads.
+Strategy: launch browser ONCE to capture nkparam + session cookies from the first
+jobapi/v3/search XHR request, then use requests.Session for all remaining queries.
+This is fast and immune to headless detection on subsequent calls.
 """
 import re
+import time
 from urllib.parse import quote
+
+import requests
 
 from ..textutil import html_to_text, parse_date, parse_label_experience, sanitize_html
 from .base import STEALTH_INIT_SCRIPT, UA, Blocked, Scraper, launch_browser
@@ -24,7 +29,7 @@ class Naukri(Scraper):
     key = "naukri"
     label = "Naukri"
     region = "India"
-    description = "India's largest job portal. Uses your installed Chrome/Edge in the background."
+    description = "India's largest job portal."
     needs_browser = True
 
     def normalize(self, d, query):
@@ -48,11 +53,89 @@ class Naukri(Scraper):
             "query": query, "detail_fetched": 1,
         }
 
-    def run(self, ctx):
+    def _bootstrap_session(self, first_url, headless):
+        """Launch browser once, capture nkparam + cookies, return requests.Session."""
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
-            raise RuntimeError("Playwright is not installed. Run start.bat again to install it.")
+            raise RuntimeError("Playwright is not installed.")
+
+        nkparam_holder = {}
+        cookies_holder = []
+
+        def on_req(req):
+            if "jobapi/v3/search" in req.url and "nkparam" not in nkparam_holder:
+                h = req.headers
+                nkparam_holder.update({
+                    "nkparam": h.get("nkparam", ""),
+                    "appid": h.get("appid", "109"),
+                    "systemid": h.get("systemid", "Naukri"),
+                    "clientid": h.get("clientid", "d3skt0p"),
+                    "gid": h.get("gid", "LOCATION,INDUSTRY,EDUCATION,FAREA_ROLE"),
+                })
+
+        with sync_playwright() as p:
+            browser = launch_browser(p, headless)
+            ctx = browser.new_context(user_agent=UA, viewport={"width": 1366, "height": 900}, locale="en-IN")
+            ctx.add_init_script(STEALTH_INIT_SCRIPT)
+            page = ctx.new_page()
+            page.route(re.compile(r"\.(png|jpg|jpeg|gif|webp)(\?|$)"), lambda r: r.abort())
+            page.on("request", on_req)
+            try:
+                page.goto(first_url, wait_until="domcontentloaded", timeout=30000)
+                # Wait for API request to fire (up to 6s)
+                for _ in range(30):
+                    if nkparam_holder:
+                        break
+                    page.wait_for_timeout(200)
+            except Exception:
+                pass
+            finally:
+                cookies_holder.extend(ctx.cookies())
+                browser.close()
+
+        if not nkparam_holder:
+            return None, None
+
+        s = requests.Session()
+        s.headers.update({
+            "User-Agent": UA,
+            "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+            "Accept": "application/json",
+            "content-type": "application/json",
+            "appid": nkparam_holder["appid"],
+            "systemid": nkparam_holder["systemid"],
+            "clientid": nkparam_holder["clientid"],
+            "gid": nkparam_holder["gid"],
+            "nkparam": nkparam_holder["nkparam"],
+        })
+        for c in cookies_holder:
+            s.cookies.set(c["name"], c["value"], domain=c.get("domain", ".naukri.com"))
+        return s, nkparam_holder["nkparam"]
+
+    def _api_search(self, session, query, loc, page_no, days, years):
+        """Call Naukri jobapi directly with the bootstrapped session."""
+        params = {
+            "noOfResults": 20,
+            "urlType": "search_by_keyword",
+            "searchType": "adv",
+            "keyword": query,
+            "pageNo": page_no,
+            "jobAge": _job_age(days),
+        }
+        if loc:
+            params["location"] = loc
+        if years not in (None, ""):
+            params["experience"] = int(float(years))
+        session.headers["Referer"] = f"https://www.naukri.com/{_slug(query)}-jobs?k={quote(query)}&jobAge={_job_age(days)}"
+        r = session.get("https://www.naukri.com/jobapi/v3/search", params=params, timeout=20)
+        if r.status_code == 406:
+            return None, True   # captcha
+        if r.status_code != 200:
+            return None, False
+        return r.json(), False
+
+    def run(self, ctx):
         pages = int(ctx.profile.get("naukri_pages") or 2)
         years = ctx.profile.get("years_experience")
         headless = bool(ctx.profile.get("naukri_headless", True))
@@ -63,115 +146,55 @@ class Naukri(Scraper):
         done = 0
         seen = set()
         captcha_hits = 0
-        with sync_playwright() as p:
-            browser = launch_browser(p, headless)
-            context = browser.new_context(user_agent=UA, viewport={"width": 1366, "height": 900}, locale="en-IN")
-            context.add_init_script(STEALTH_INIT_SCRIPT)
-            page = context.new_page()
-            page.route(re.compile(r"\.(png|jpg|jpeg|gif|webp)(\?|$)"), lambda r: r.abort())
 
-            captured = {}
+        # Bootstrap: one browser page load to get nkparam + cookies
+        first_q, first_loc = plan[0]
+        first_url = f"https://www.naukri.com/{_slug(first_q)}-jobs?k={quote(first_q)}&jobAge={_job_age(ctx.days)}"
+        if first_loc:
+            first_url += f"&l={quote(first_loc)}"
 
-            def on_response(resp):
-                if "jobapi/v3/search" in resp.url:
-                    if resp.status == 406:
-                        captured["captcha"] = True
-                    elif resp.status == 200:
-                        try:
-                            captured["data"] = resp.json()
-                        except Exception:
-                            pass
+        ctx.log("Naukri: initializing browser session...")
+        session, nkparam = self._bootstrap_session(first_url, headless)
 
-            page.on("response", on_response)
+        if not session:
+            ctx.log("Naukri: could not capture API token. Skipping Naukri search.")
+            return
 
-            try:
-                for q, loc in plan:
-                    for n in range(1, pages + 1):
-                        if ctx.stopped:
-                            return
-                        base = f"{_slug(q)}-jobs" + (f"-in-{_slug(loc)}" if loc else "")
-                        if n > 1:
-                            base += f"-{n}"
-                        url = f"https://www.naukri.com/{base}?k={quote(q)}&jobAge={_job_age(ctx.days)}"
-                        if loc:
-                            url += f"&l={quote(loc)}"
-                        if years not in (None, ""):
-                            url += f"&experience={int(float(years))}"
-                        
-                        captured.clear()
-                        try:
-                            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                            # Wait up to 6s for the background search API response
-                            for _ in range(30):
-                                if "data" in captured or "captcha" in captured or ctx.stopped:
-                                    break
-                                page.wait_for_timeout(200)
-                        except Exception as e:
-                            ctx.log(f"Naukri page error for '{q}' page {n}: {str(e)[:80]}")
+        ctx.log("Naukri: session ready, querying API...")
 
-                        if captured.get("captcha"):
-                            captcha_hits += 1
+        for q, loc in plan:
+            for n in range(1, pages + 1):
+                if ctx.stopped:
+                    return
+                try:
+                    data, is_captcha = self._api_search(session, q, loc, n, ctx.days, years)
+                    if is_captcha:
+                        captcha_hits += 1
+                        ctx.log(f"Naukri captcha hit for '{q}' page {n}")
+                except Exception as e:
+                    ctx.log(f"Naukri API error for '{q}' page {n}: {str(e)[:80]}")
+                    data, is_captcha = None, False
 
-                        data = captured.get("data")
-                        done += 1
-                        ctx.progress(done, total)
-                        if captcha_hits >= 3:
-                            raise Blocked("Naukri asked for a captcha. Turn off 'Naukri headless' in Settings and run again.")
-                        
-                        jobs = (data.get("jobDetails") or []) if data else []
-                        if jobs:
-                            for d in jobs:
-                                if not d.get("jobId") or d["jobId"] in seen:
-                                    continue
-                                seen.add(d["jobId"])
-                                ctx.emit(self.normalize(d, q))
-                            if len(jobs) < 20:
-                                done += pages - n
-                                break
-                        else:
-                            # DOM fallback: parse job cards directly from the rendered HTML
-                            try:
-                                from bs4 import BeautifulSoup
-                                soup = BeautifulSoup(page.content(), "html.parser")
-                                tuples = soup.select(".srp-jobtuple-wrapper") or soup.select(".cust-job-tuple") or soup.select("article.jobTuple")
-                                dom_found = 0
-                                for t in tuples:
-                                    a = t.select_one("a.title") or t.select_one(".title")
-                                    if not a or not a.get("href"):
-                                        continue
-                                    href = a.get("href")
-                                    m = re.search(r"-([0-9]{10,14})(?:\?|$)", href)
-                                    jid = m.group(1) if m else None
-                                    if not jid or jid in seen:
-                                        continue
-                                    comp = t.select_one(".comp-name") or t.select_one("a.subTitle")
-                                    loc_el = t.select_one(".loc-wrap") or t.select_one(".location")
-                                    exp_el = t.select_one(".exp-wrap") or t.select_one(".experience")
-                                    desc_el = t.select_one(".job-desc") or t.select_one(".job-description")
-                                    tags = [tag.get_text(strip=True) for tag in t.select(".tags-gt li, .dot-gt li, .tag-li")]
-                                    raw_desc = desc_el.get_text(" ", strip=True) if desc_el else ""
-                                    lo, hi = parse_label_experience(exp_el.get_text(strip=True) if exp_el else "")
-                                    loc_str = loc_el.get_text(" ", strip=True) if loc_el else (loc or "")
-                                    seen.add(jid)
-                                    dom_found += 1
-                                    ctx.emit({
-                                        "source": self.key, "source_id": str(jid), "url": href, "apply_url": href,
-                                        "title": a.get_text(" ", strip=True),
-                                        "company": comp.get_text(" ", strip=True) if comp else "",
-                                        "company_logo": None,
-                                        "location": loc_str,
-                                        "remote": bool(re.search(r"remote|work from home|wfh", loc_str, re.I)),
-                                        "salary": None, "posted_at": None,
-                                        "description_html": sanitize_html(raw_desc), "description_text": raw_desc,
-                                        "tags": tags, "exp_min": lo, "exp_max": hi, "exp_source": "naukri" if lo is not None else None,
-                                        "query": q, "detail_fetched": 1,
-                                    })
-                                if dom_found < 20 and n > 1:
-                                    done += pages - n
-                                    break
-                            except Exception as e:
-                                ctx.log(f"Naukri DOM parse error: {str(e)[:60]}")
-                        page.wait_for_timeout(1000)
-            finally:
-                browser.close()
+                done += 1
+                ctx.progress(done, total)
+
+                if captcha_hits >= 3:
+                    raise Blocked("Naukri is blocking requests. Try running with 'Naukri headless' turned off.")
+
+                if not data:
+                    continue
+
+                jobs = data.get("jobDetails") or []
+                for d in jobs:
+                    if not d.get("jobId") or d["jobId"] in seen:
+                        continue
+                    seen.add(d["jobId"])
+                    ctx.emit(self.normalize(d, q))
+
+                if len(jobs) < 20:
+                    done += pages - n
+                    break
+
+                time.sleep(0.8)
+
         ctx.log(f"Naukri: {len(seen)} postings")
