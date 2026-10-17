@@ -1,112 +1,218 @@
-# JobRadar
+<div align="center">
 
-A local job search dashboard. It reads your resume, searches several job portals, and shows only the jobs that fit your skills and experience, ranked by how likely you are to get an interview.
+# 🎯 JobRadar
 
-Everything runs on your own machine. Your resume and job data stay in the `data` folder.
+### Open-Source AI Job Search Aggregator, ATS Resume Tailor & Application Assistant
 
-## Start
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](Dockerfile)
+[![Playwright](https://img.shields.io/badge/Playwright-Automated-45ba4b.svg?logo=playwright&logoColor=white)](https://playwright.dev/)
+[![Privacy: BYOK](https://img.shields.io/badge/Privacy-BYOK%20%7C%20Zero--Shared--Cost-success.svg)](#-privacy--multi-tenant-byok-architecture)
 
-Double-click **start.bat**, or the **JobRadar** shortcut on your desktop.
+*Turn weeks of exhausting job hunting into minutes. Aggregate listings across top portals, calculate interview odds, tailor resumes with AI for ATS compliance, and semi-automate applications with human oversight.*
 
-The first start takes about a minute because it installs what it needs. Later starts are instant. Your browser opens at http://127.0.0.1:8765. Keep the black window open while you use it, and close it to stop.
+[Features](#-key-features) • [Privacy & BYOK](#-privacy--multi-tenant-byok-architecture) • [Quickstart](#-quickstart) • [Cloud Deployment](#-cloud-deployment-railway-docker-vps) • [How to Use](#-step-by-step-usage-guide) • [SEO & Hashtags](#-search-keywords--hashtags)
 
-You only need Python 3.10 or newer, plus Chrome or Edge for Naukri.
+---
 
-## Move to another computer
+</div>
 
-1. On the new computer, install Python 3.10 or newer from https://www.python.org/downloads/. Tick **Add python.exe to PATH** during setup. Chrome or Edge is needed for Naukri.
-2. Copy the `JobMatcher` folder, or `JobRadar.zip` unzipped. You can leave out `.venv`, which is rebuilt automatically and is large. If you copy it anyway, the launcher notices it does not work on the new computer and rebuilds it.
-3. Double-click `start.bat`. The first start installs everything and adds a desktop shortcut.
+## 💡 What is JobRadar?
 
-To keep your profile, saved and applied jobs, also copy the `data` folder. Copy it while JobRadar is closed. Leave it out to start fresh.
+**JobRadar** is a local-first, privacy-respecting job search automation engine and dashboard. Instead of spending hours jumping between 10 different job boards, manually tweaking resumes, and copy-pasting answers into application forms, JobRadar does the heavy lifting:
 
-On macOS or Linux, run `./start.sh` instead of `start.bat`.
+1. **Aggregates Real-Time Listings** in parallel from LinkedIn, Naukri, Remotive, RemoteOK, Himalayas, Jobicy, We Work Remotely, Arbeitnow, and The Muse.
+2. **Scores Every Role** against your actual resume skills, years of experience, and role seniority—giving you a transparent **Match Score** and **Interview Probability Index**.
+3. **AI Resume Tailoring**: Uses state-of-the-art LLMs (Claude 3.5 Sonnet, GPT-4o, or any custom OpenAI-compatible endpoint) to rewrite bullet points for exact ATS keywords while preserving your original DOCX formatting.
+4. **100-Point ATS Validator**: Performs structural audits (tables, columns, font sizes, heading syntax) and keyword gap analysis so your resume never gets lost in recruiter algorithms.
+5. **Semi-Automated Apply Assistant**: Auto-fills job applications (Greenhouse, Lever, Ashby, Workday, LinkedIn Easy Apply, Naukri) and drafts AI answers for screening questions—keeping you in control for the final submission.
 
-## Use
+---
 
-1. Drop your resume (PDF, DOCX or TXT) on the upload box.
-2. Check what was read: current position, years of experience, skills and target roles. Fix anything that is wrong, then click **Save and re-score**.
-3. Click **Find jobs**. All portals are searched in parallel and results appear as they arrive.
-4. Use **Show JD** to read the job description and see why it matches. Use **Apply** to open the application page.
-5. Use Save, Mark applied and Hide to track your progress. Export the current list with **CSV**.
+## 🔒 Privacy & Multi-Tenant BYOK Architecture
 
-## Tailor your resume to a job (AI)
+JobRadar is engineered with a **Zero-Shared-Cost / Bring-Your-Own-Key (BYOK)** security model:
 
-1. Open **AI settings** at the top of the sidebar. Pick a provider: **Claude** (Anthropic), **OpenAI** or **Codecraft** (any OpenAI-compatible endpoint, which also needs a base URL and model name).
-2. Paste your API key, keep or change the model, click **Test connection**, then **Save AI settings**. Keys are stored only in the local `data` folder.
-3. On any job, click **Tailor resume** (on the card or inside the JD drawer). After 20 to 60 seconds you get two downloads, an ATS score, and a line-by-line list of what changed.
+- **Zero Server-Side Key Storage**: Your AI provider keys (Anthropic, OpenAI, or Codecraft/custom proxies) are stored exclusively in your browser’s local storage (`localStorage`). They are passed per-request over HTTPS and never written to server configuration files or databases.
+- **Shared Deployment Safe**: You can host a single JobRadar instance on Railway, Render, or a VPS and share the public link with family, friends, or a community. Each user supplies their own API key and consumes their own token quota. **The server owner incurs $0 LLM costs.**
+- **Per-User Workspace Isolation**: Candidate profiles, uploaded resumes, ATS scores, and tracked job statuses (`saved`, `applied`, `hidden`) are partitioned per browser using a local UUID workspace header (`X-User-Id`). Users accessing the same public link never see each other's data.
+- **Local-First**: When running locally, all databases and files reside completely on your own machine in the `data/` folder.
 
-### ATS friendliness
+---
 
-Applicant tracking systems rank resumes by exact keyword matches and only read text they can parse. Every tailored resume therefore gets:
+## 🌟 Key Features
 
-- **ATS rules in the rewrite.** The AI must use the job's exact wording for skills and tools, spell out acronyms once ("Amazon Web Services (AWS)"), lead bullets with action verbs, avoid symbols and first-person pronouns, and never stuff keywords.
-- **An ATS-safe copy.** Next to the file in your own layout you get a single-column DOCX in Calibri with standard headings (Professional Summary, Work Experience, Education, Skills), real bullets, contact details in the body, and no tables, text boxes, columns or images. Use this one for online applications and keep the formatted one for people.
-- **An ATS check with a score out of 100.** Twelve structural checks (columns, tables, text boxes, images, contact details in the body, standard headings, fonts, font size, special characters, length, employment dates, file type) plus keyword coverage: which of the job's key terms appear in the resume and which do not. Missing terms are listed so you can add them only if you genuinely have that experience.
+| Category | Highlights |
+|---|---|
+| 🔍 **Multi-Portal Scraping** | Parallel live search across **LinkedIn**, **Naukri**, **Remotive**, **RemoteOK**, **Himalayas**, **Jobicy**, **We Work Remotely**, **Arbeitnow**, and **The Muse**. |
+| 📊 **Intelligent Matching** | Weighted calculation: **55% skills**, **30% experience**, **15% title similarity**. Considers posting freshness and applicant competition to predict your **Interview Chance**. |
+| 🤖 **AI Resume Tailoring** | Supports **Claude 3.5 Sonnet**, **OpenAI GPT-4o**, and **Codecraft / OpenAI-compatible LLMs** (vLLM, Ollama, DeepSeek, LocalAI) with live dynamic model discovery. |
+| 📝 **DOCX Preservation** | Tailors your existing Word document **in-place** (retaining your fonts, margins, headers, and aesthetic style) while simultaneously producing an ATS-optimized clean copy. |
+| 🛡️ **ATS Compliance Score** | 12-point layout and structural check + detailed missing keyword report. |
+| ⚡ **Playwright Apply Assistant** | Detects ATS portals (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, LinkedIn Easy Apply, Naukri) and auto-populates personal details, resumes, and screening answers. |
+| 👤 **Human-in-the-Loop** | Never blindly applies without your consent. You always inspect the pre-filled form and click the final submit button. |
 
-PDF resumes are rebuilt directly in the ATS-safe layout. The score is a strong proxy, but no tool can guarantee a given employer's system, so also paste the job's must-have terms into your own review.
+---
 
-How it works: the job description and your resume text are sent to the provider you chose. The AI only rewrites the summary, skills and experience bullets, and is told never to invent experience or touch your name, contact details, dates, education or headings. Those lines are also protected on this side, so even a bad model answer cannot change them.
+## 🚀 Quickstart
 
-- **DOCX resumes** are edited in place. Fonts, styles, bullets and tables stay exactly as they were.
-- **PDF resumes** cannot be edited in place, so the tailored version is rebuilt as a DOCX that follows the same line order. Upload a DOCX to keep your exact formatting.
-- **TXT resumes** are edited line by line.
+### Option 1: Windows (1-Click Launch)
 
-Tailored files are saved under `data/tailored`, the ATS-safe copy with an `(ATS)` suffix. Every version stays listed in the job drawer until you delete it.
+No command line required.
 
-## Apply assistant
+1. Install [Python 3.10+](https://www.python.org/downloads/) (Make sure to tick **"Add python.exe to PATH"** during installation).
+2. [Download or clone](https://github.com/Vijayroyal358/JobRadar.git) this repository:
+   ```cmd
+   git clone https://github.com/Vijayroyal358/JobRadar.git
+   cd JobRadar
+   ```
+3. Double-click **`start.bat`**.
+   - The launcher will automatically build the virtual environment, install requirements, and open your browser at `http://127.0.0.1:8765`.
+   - A desktop shortcut will also be created for future launches.
 
-Select jobs with the checkbox on each card (or use **Apply to all shown**) and click **Apply to selected**. A Chrome or Edge window opens with its own profile, so once you log in to LinkedIn, Naukri or a company portal the session is kept under `data/apply/browser`.
+---
 
-For each job the assistant:
+### Option 2: macOS / Linux
 
-1. Opens the application page, follows "Apply" buttons, and detects the portal: LinkedIn Easy Apply, Naukri, Greenhouse, Lever, Ashby, SmartRecruiters, Workday, or a generic company form.
-2. Fills every field it recognises from your **Apply** profile in the sidebar: name, contact details, links, location, experience, notice period, salary, work authorization, relocation, cover letter, and "prefer not to say" for diversity questions unless you set them.
-3. Attaches the ATS-safe tailored resume for that job if you made one, otherwise your uploaded resume.
-4. Answers screening questions from your **Saved answers**. Unknown questions go to the AI, which drafts an answer from your resume; drafts are shown in the Apply assistant panel where you can edit them and push them into the form.
-5. Steps through multi-page forms (LinkedIn's Next and Review buttons, Workday's Save and Continue).
-6. Stops at the final step. **You always click Submit in the browser.** When the portal confirms, or you click **I submitted it**, the job is marked Applied and the answers you approved are remembered.
+1. Clone repository:
+   ```bash
+   git clone https://github.com/Vijayroyal358/JobRadar.git
+   cd JobRadar
+   ```
+2. Make script executable and launch:
+   ```bash
+   chmod +x start.sh
+   ./start.sh
+   ```
+   *(Or run directly via `python3 run.py`)*
 
-If a portal asks you to log in or shows a captcha, the panel says so and waits for you. Naukri has no form before its one-click Apply, so there the assistant waits for you to click Apply and then answers the recruiter chatbot's questions.
+---
 
-Limits worth knowing: LinkedIn's terms prohibit automation, which is why the assistant never submits there on its own. Workday needs an account per company. Forms with unusual widgets may leave a field empty; the panel lists what was filled so you can check the rest in the browser.
+### Option 3: Docker & Docker Compose
 
-## Sources
+Deploy locally in an isolated container with Playwright pre-installed:
 
-| Portal | Coverage | How |
-|---|---|---|
-| LinkedIn | Your locations, plus remote | Public job search, with full descriptions and applicant counts |
-| Naukri | India | Your installed Chrome or Edge, run in the background |
-| Remotive, RemoteOK, Himalayas, Jobicy, We Work Remotely | Remote | Public APIs and feeds |
-| Arbeitnow | Europe and remote | Public API |
-| The Muse | US and remote | Public API |
+```bash
+# Clone and enter repo
+git clone https://github.com/Vijayroyal358/JobRadar.git
+cd JobRadar
 
-Turn individual sources on or off under **Job sources** in the profile panel. The sidebar has three panels: **Profile** (resume, skills, roles, locations, sources, advanced), **AI settings** (API keys and model) and **Apply** (application details, saved answers, portal logins).
-
-## How jobs are scored
-
-- **Match score** is 55% skills, 30% experience and 15% role similarity.
-  - Skills found in the job title count three times, explicit skill tags count twice, and skills in the description count once.
-  - Role similarity carries little weight because titles vary between companies.
-- **Interview chance** is 75% match score, 13% freshness and 12% competition. Freshness is how recently the job was posted. Competition is based on the applicant count where the portal shows it.
-- A job is **excluded** when it needs more than 2 years beyond your experience, or when you are far beyond its range. It is also excluded when no skills overlap or when it is limited to a country you cannot work from. Turn on **Show excluded** to see these jobs.
-- **High** chance is 68 or more, **Medium** is 50 to 67, and **Low** is below 50.
-
-## Settings worth knowing
-
-- **Target roles** are the search keywords. Add the variations companies use, for example "Backend Developer" and "Python Engineer".
-- **Search locations** are used by LinkedIn and Naukri. Add cities such as Bengaluru and Hyderabad.
-- **Advanced** controls how deep each search goes. More pages give more jobs but take longer.
-- If Naukri reports a captcha, turn off **Run Naukri browser hidden** and search again. A visible browser window passes the check more reliably.
-
-## Files
-
+# Launch container in background
+docker compose up -d
 ```
-start.bat            launcher (Windows)
-run.py               sets up .venv, starts the server, opens the browser
-app/                 server: resume parser, skill dictionary, matcher, scrapers, AI providers, resume tailoring, apply assistant, API
-static/              dashboard (HTML, CSS, JS)
-data/                your database, uploaded resume, API keys, tailored resumes and the apply browser profile (created on first run)
+Open **`http://localhost:8765`** in your browser. All your data and resumes are persisted in `./data`.
+
+---
+
+## ☁️ Cloud Deployment (Railway, Docker, VPS)
+
+JobRadar is containerized and cloud-ready for instant deployment on services like **Railway.app**, **Render**, or any Linux VPS.
+
+### Deploying on Railway:
+
+1. Push this repository to your GitHub account.
+2. Sign in to [Railway.app](https://railway.app/) and click **New Project** &rarr; **Deploy from GitHub repo**.
+3. Select your **JobRadar** repository.
+4. Railway will automatically detect the `Dockerfile` and build the container using Jammy + Playwright.
+5. In your Railway service settings:
+   - Under **Networking**, click **Generate Domain** (gives you a public `https://....up.railway.app` URL).
+   - Ensure the port is set to `8765` (Railway binds `$PORT` automatically).
+6. **You're live!** Share the URL with anyone—each visitor connects with their own private BYOK session.
+
+---
+
+## 📖 Step-by-Step Usage Guide
+
+### 1. Set Up Your AI Credentials (BYOK)
+- Click **AI settings** in the sidebar.
+- Choose your provider:
+  - **Claude (Anthropic)**: Enter `sk-ant-...`
+  - **OpenAI**: Enter `sk-...`
+  - **Codecraft / Compatible Endpoint**: Enter your API base URL (e.g. `https://api.yourproxy.com/v1` or local Ollama) and click to dynamically select available models.
+- Click **Test connection** &rarr; **Save AI settings**. Keys remain safely stored in your browser's local storage.
+
+### 2. Upload Your Resume
+- Drag & drop your resume (**PDF**, **DOCX**, or **TXT**) into the upload box.
+- JobRadar parses your experience, skills, and target roles automatically.
+- Adjust any fields in the sidebar and click **Save and re-score**.
+
+### 3. Find Jobs Across the Web
+- Click **Find jobs**.
+- JobRadar queries enabled job portals in parallel. Results stream into your dashboard ranked by **Match Score** and **Interview Chance**.
+- Filter by location, remote-only, minimum score, or specific keywords.
+
+### 4. Tailor Resume for Any Job
+- Click **Tailor resume** on any job card.
+- JobRadar's AI compares the job description against your resume, weaves in essential keywords, and formats bullet points using strong action verbs.
+- Within 30 seconds, download:
+  - **Your formatted DOCX** (original visual template preserved).
+  - **Clean ATS-Safe DOCX** (single column, ATS-standard headers, zero parsing errors).
+  - An **ATS Score out of 100** with a keyword gap analysis.
+
+### 5. Fast-Track Applications
+- Check the jobs you want to target and open **Apply assistant**.
+- JobRadar opens a secure browser window, navigates to the application page, and automatically fills in your standard details (contact info, experience, portfolio links).
+- When a portal presents custom screening questions, the AI drafts tailored answers from your resume.
+- Review everything on screen and click submit yourself.
+
+---
+
+## 📁 Repository Structure
+
+```plaintext
+JobRadar/
+├── app/
+│   ├── ai.py                  # Anthropic, OpenAI & Codecraft LLM handlers
+│   ├── apply.py               # Playwright-based application assistant
+│   ├── config.py              # Application settings & environment loaders
+│   ├── database.py            # SQLite schema (multi-user workspace partitioned)
+│   ├── matcher.py             # Match score & interview probability algorithm
+│   ├── resume_parser.py       # PDF/DOCX/TXT text & skill extraction
+│   ├── tailor.py              # ATS resume rewriting & structural compliance
+│   ├── routes/                # FastAPI endpoint controllers
+│   └── scrapers/              # Scraping modules (LinkedIn, Naukri, Remote APIs)
+├── static/                    # Frontend dashboard (HTML5, modern CSS, vanilla JS)
+├── tests/                     # Unit and integration test suite
+├── Dockerfile                 # Playwright Jammy production container
+├── docker-compose.yml         # 1-command container deployment
+├── requirements.txt           # Python dependencies
+├── run.py                     # Entry point & browser launcher
+├── start.bat                  # Windows 1-click bootstrapper
+└── start.sh                   # macOS/Linux bootstrapper
 ```
 
-To add a portal, create a scraper in `app/scrapers/` and register it in `app/scrapers/__init__.py`.
+---
+
+## 🔒 Security & Privacy Guarantee
+
+- **No Hardcoded Keys**: This codebase contains zero hardcoded API keys, tokens, or credentials.
+- **Client-Side Secret Storage**: All user credentials remain in the client's browser storage.
+- **No Third-Party Telemetry**: JobRadar contains zero tracking scripts, analytics beacons, or third-party tracking pixels.
+
+---
+
+## 🏷️ Search Keywords & Hashtags
+
+Help others discover this project! If you are searching on Google, GitHub, or social platforms, use these keywords and hashtags:
+
+### Google & GitHub Search Queries
+> `ai job search aggregator`, `automated job application assistant`, `ats resume tailor open source`, `linkedin job scraper python`, `naukri job scraper playwright`, `ai resume builder claude openai`, `self hosted job application bot`, `free ats resume optimizer`, `job board aggregator python`, `byok ai resume tailor`
+
+### GitHub Topic Tags
+`ai` • `job-search` • `job-scraper` • `resume-builder` • `ats-optimizer` • `resume-tailoring` • `linkedin-scraper` • `naukri-scraper` • `playwright` • `fastapi` • `python` • `claude-ai` • `openai` • `automation` • `byok`
+
+### Social Media Hashtags
+`#JobSearch` `#OpenSource` `#AIResume` `#ATS` `#JobHunt` `#Python` `#FastAPI` `#Playwright` `#MachineLearning` `#CareerTech` `#ArtificialIntelligence` `#ResumeOptimization` `#DevCommunity`
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+  <b>Star ⭐ this repository if JobRadar helps you land your next interview!</b>
+</div>
