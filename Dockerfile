@@ -12,9 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Keep SQLite db and resume uploads persistent
-VOLUME ["/app/data"]
-
 EXPOSE 8765
 
 CMD ["python", "run.py", "--no-browser"]
