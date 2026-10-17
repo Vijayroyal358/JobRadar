@@ -21,7 +21,15 @@ def _job_age(days):
 
 
 def _launch(p, headless):
-    args = ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check"]
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+    ]
     last = None
     for channel in ("chrome", "msedge", None):
         try:

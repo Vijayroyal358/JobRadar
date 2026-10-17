@@ -196,8 +196,16 @@ def _ensure_thread():
 
 # ---------------------------------------------------------------- browser
 def _launch(p):
-    args = ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check",
-            "--start-maximized"]
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--start-maximized",
+    ]
     headless = os.environ.get("JOBRADAR_APPLY_HEADLESS") == "1"
     last = None
     for channel in ("chrome", "msedge", None):
