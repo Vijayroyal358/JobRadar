@@ -241,26 +241,26 @@ def _safe_name(s, n=40):
 
 
 # ---------------------------------------------------------------- entry point
-def tailor_job(job_id, provider=None, client_ai=None):
+def tailor_job(job_id, provider=None, client_ai=None, user_id="default"):
     """Tailor the saved resume to job `job_id`. Returns the stored tailored record (with changes)."""
     with _inflight_lock:
         if job_id in _inflight:
             raise TailorError("This job is already being tailored. Give it a moment.")
         _inflight.add(job_id)
     try:
-        return _tailor(job_id, provider, client_ai=client_ai)
+        return _tailor(job_id, provider, client_ai=client_ai, user_id=user_id)
     finally:
         with _inflight_lock:
             _inflight.discard(job_id)
 
 
-def _tailor(job_id, provider, client_ai=None):
+def _tailor(job_id, provider, client_ai=None, user_id="default"):
     job = db.get_job(job_id)
     if not job:
         raise TailorError("Job not found")
     if not job.get("detail_fetched") or not job.get("description_text"):
         job = engine.refresh_job_detail(job)
-    profile = db.get_profile()
+    profile = db.get_profile(user_id=user_id)
     kind, segs, handle = load_segments(profile)
     system, user = build_prompt(job, segs, profile)
     raw, used_provider, model = ai.complete_json(system, user, SCHEMA, provider, client_ai=client_ai)
@@ -332,8 +332,9 @@ def _tailor(job_id, provider, client_ai=None):
         "keywords": best["covered"], "changes": changes,
         "ats_filename": ats_path.name if ats_path else None, "ats_path": str(ats_path) if ats_path else None,
         "ats": report,
-    })
-    rec = db.get_tailored(tid)
+        "user_id": user_id,
+    }, user_id=user_id)
+    rec = db.get_tailored(tid, user_id=user_id)
     rec["note"] = _format_note(kind)
     return rec
 

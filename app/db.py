@@ -19,6 +19,23 @@ _conn.execute("PRAGMA journal_mode=WAL")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS profile (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS profiles (
+    user_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS job_user_status (
+    user_id TEXT NOT NULL,
+    job_id INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    status_at TEXT,
+    PRIMARY KEY (user_id, job_id)
+);
+CREATE TABLE IF NOT EXISTS apply_profiles (
+    user_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,
@@ -77,10 +94,22 @@ with _lock:
     _conn.commit()
     # Columns added after the first release; ALTER is a no-op on fresh databases.
     _have = {r["name"] for r in _conn.execute("PRAGMA table_info(tailored)").fetchall()}
-    for _col, _ddl in (("ats_filename", "TEXT"), ("ats_path", "TEXT"), ("ats", "TEXT DEFAULT '{}'")):
+    for _col, _ddl in (("ats_filename", "TEXT"), ("ats_path", "TEXT"), ("ats", "TEXT DEFAULT '{}'"), ("user_id", "TEXT DEFAULT 'default'")):
         if _col not in _have:
             _conn.execute(f"ALTER TABLE tailored ADD COLUMN {_col} {_ddl}")
+    _have_ans = {r["name"] for r in _conn.execute("PRAGMA table_info(answers)").fetchall()}
+    if "user_id" not in _have_ans:
+        _conn.execute("ALTER TABLE answers ADD COLUMN user_id TEXT DEFAULT 'default'")
     _conn.commit()
+    # Migrate legacy single profile row to profiles table if present
+    try:
+        old_prof = _conn.execute("SELECT data FROM profile WHERE id = 1").fetchone()
+        if old_prof and old_prof[0]:
+            _conn.execute("INSERT OR IGNORE INTO profiles (user_id, data, updated_at) VALUES ('default', ?, ?)",
+                          (old_prof[0], iso(now_utc())))
+            _conn.commit()
+    except Exception:
+        pass
 
 JOB_FIELDS = ["url", "apply_url", "title", "company", "company_logo", "location", "remote", "job_type", "salary",
               "posted_at", "description_html", "description_text", "tags", "exp_min", "exp_max", "exp_source",
@@ -141,9 +170,12 @@ def row_to_dict(row, include_desc=False):
     return d
 
 
-# ---------------------------------------------------------------- profile
-def get_profile():
-    row = q("SELECT data FROM profile WHERE id = 1", one=True)
+# ---------------------------------------------------------------- profile (per user)
+def get_profile(user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    row = q("SELECT data FROM profiles WHERE user_id = ?", (user_id,), one=True)
+    if not row and user_id == "default":
+        row = q("SELECT data FROM profile WHERE id = 1", one=True)
     data = dict(DEFAULT_PROFILE)
     if row:
         try:
@@ -153,12 +185,32 @@ def get_profile():
     return data
 
 
-def save_profile(data):
-    merged = get_profile()
+def save_profile(data, user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    merged = get_profile(user_id)
     merged.update({k: v for k, v in data.items() if k in DEFAULT_PROFILE})
-    execute("INSERT INTO profile (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-            (json.dumps(merged),))
+    execute("INSERT INTO profiles (user_id, data, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+            (user_id, json.dumps(merged), iso(now_utc())))
+    if user_id == "default":
+        execute("INSERT INTO profile (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+                (json.dumps(merged),))
     return merged
+
+
+# ---------------------------------------------------------------- user job status (saved / applied / hidden)
+def get_user_job_statuses(user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    rows = q("SELECT job_id, status FROM job_user_status WHERE user_id = ?", (user_id,))
+    return {r["job_id"]: r["status"] for r in rows}
+
+
+def set_user_job_status(job_id, status, user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    execute("INSERT INTO job_user_status (user_id, job_id, status, status_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, job_id) DO UPDATE SET status = excluded.status, status_at = excluded.status_at",
+            (user_id, job_id, status, iso(now_utc())))
+
 
 
 # ---------------------------------------------------------------- jobs
@@ -278,14 +330,15 @@ def all_settings(prefix=""):
 
 
 # ---------------------------------------------------------------- tailored resumes
-def add_tailored(rec):
+def add_tailored(rec, user_id="default"):
+    user_id = str(rec.get("user_id") or user_id or "default").strip() or "default"
     cur = execute(
         "INSERT INTO tailored (job_id, provider, model, source_format, output_format, filename, path, summary, "
-        "keywords, changes, created_at, ats_filename, ats_path, ats) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "keywords, changes, created_at, ats_filename, ats_path, ats, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (rec["job_id"], rec.get("provider"), rec.get("model"), rec.get("source_format"), rec.get("output_format"),
          rec.get("filename"), rec.get("path"), rec.get("summary"), json.dumps(rec.get("keywords") or []),
          json.dumps(rec.get("changes") or []), iso(now_utc()), rec.get("ats_filename"), rec.get("ats_path"),
-         json.dumps(rec.get("ats") or {})))
+         json.dumps(rec.get("ats") or {}), user_id))
     return cur.lastrowid
 
 
@@ -307,8 +360,9 @@ def _tailored_row(r, with_changes=True):
     return d
 
 
-def get_tailored(tid):
-    row = q("SELECT * FROM tailored WHERE id = ?", (tid,), one=True)
+def get_tailored(tid, user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    row = q("SELECT * FROM tailored WHERE id = ? AND (user_id = ? OR user_id = 'default')", (tid, user_id), one=True)
     return _tailored_row(row) if row else None
 
 
@@ -319,13 +373,15 @@ def tailored_path(tid, variant=""):
     return row["ats_path"] if variant == "ats" else row["path"]
 
 
-def tailored_for_job(job_id):
+def tailored_for_job(job_id, user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
     return [_tailored_row(r, with_changes=False)
-            for r in q("SELECT * FROM tailored WHERE job_id = ? ORDER BY id DESC", (job_id,))]
+            for r in q("SELECT * FROM tailored WHERE job_id = ? AND (user_id = ? OR user_id = 'default') ORDER BY id DESC", (job_id, user_id))]
 
 
-def delete_tailored(tid):
-    execute("DELETE FROM tailored WHERE id = ?", (tid,))
+def delete_tailored(tid, user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    execute("DELETE FROM tailored WHERE id = ? AND (user_id = ? OR user_id = 'default')", (tid, user_id))
 
 
 # ---------------------------------------------------------------- answer bank (auto-apply)
@@ -336,22 +392,28 @@ def norm_question(q):
     return _re.sub(r"\s+", " ", q).strip()
 
 
-def list_answers():
-    return [dict(r) for r in q("SELECT * FROM answers ORDER BY used DESC, id DESC")]
+def list_answers(user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    return [dict(r) for r in q("SELECT * FROM answers WHERE user_id = ? OR user_id = 'default' ORDER BY used DESC, id DESC", (user_id,))]
 
 
-def save_answer(question, answer, source="user"):
+def save_answer(question, answer, source="user", user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
     n = norm_question(question)
     if not n or not str(answer).strip():
         return None
-    execute("INSERT INTO answers (question, norm, answer, source, created_at) VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(norm) DO UPDATE SET answer = excluded.answer, source = excluded.source",
-            (question.strip(), n, str(answer).strip(), source, iso(now_utc())))
-    return q("SELECT * FROM answers WHERE norm = ?", (n,), one=True)["id"]
+    existing = q("SELECT id FROM answers WHERE norm = ? AND user_id = ?", (n, user_id), one=True)
+    if existing:
+        execute("UPDATE answers SET answer = ?, source = ? WHERE id = ?", (str(answer).strip(), source, existing["id"]))
+        return existing["id"]
+    cur = execute("INSERT INTO answers (question, norm, answer, source, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+                  (question.strip(), n, str(answer).strip(), source, iso(now_utc()), user_id))
+    return cur.lastrowid
 
 
-def delete_answer(aid):
-    execute("DELETE FROM answers WHERE id = ?", (aid,))
+def delete_answer(aid, user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    execute("DELETE FROM answers WHERE id = ? AND (user_id = ? OR user_id = 'default')", (aid, user_id))
 
 
 def bump_answer(aid):

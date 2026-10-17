@@ -58,10 +58,14 @@ class Stop(Exception):
 
 
 # ---------------------------------------------------------------- profile
-def get_apply_profile():
+def get_apply_profile(user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
     p = dict(DEFAULT_APPLY_PROFILE)
-    p.update(db.get_setting("apply.profile", {}) or {})
-    up = db.get_profile()
+    saved = db.get_setting(f"apply.profile.{user_id}")
+    if saved is None and user_id == "default":
+        saved = db.get_setting("apply.profile", {})
+    p.update(saved or {})
+    up = db.get_profile(user_id=user_id)
     if not p.get("first_name") and up.get("name"):
         parts = up["name"].split()
         p["first_name"], p["last_name"] = parts[0], " ".join(parts[1:])
@@ -78,14 +82,17 @@ def get_apply_profile():
     return p
 
 
-def save_apply_profile(data):
-    cur = db.get_setting("apply.profile", {}) or {}
+def save_apply_profile(data, user_id="default"):
+    user_id = str(user_id or "default").strip() or "default"
+    cur = db.get_setting(f"apply.profile.{user_id}", {}) or {}
     for k in DEFAULT_APPLY_PROFILE:
         if k in data:
             v = data[k]
             cur[k] = v if isinstance(v, bool) else ("" if v is None else str(v).strip())
-    db.set_setting("apply.profile", cur)
-    return get_apply_profile()
+    db.set_setting(f"apply.profile.{user_id}", cur)
+    if user_id == "default":
+        db.set_setting("apply.profile", cur)
+    return get_apply_profile(user_id)
 
 
 def profile_ready(p=None):

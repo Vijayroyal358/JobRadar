@@ -38,8 +38,19 @@
   const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : "#");
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
+  const USER_ID_KEY = "jr_user_id_v1";
+  function getUserId() {
+    let uid = localStorage.getItem(USER_ID_KEY);
+    if (!uid) {
+      uid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : ("u_" + Math.random().toString(36).slice(2) + Date.now().toString(36));
+      localStorage.setItem(USER_ID_KEY, uid);
+    }
+    return uid;
+  }
+
   async function api(path, opts = {}) {
     const init = { ...opts, headers: { ...(opts.headers || {}) } };
+    init.headers["X-User-Id"] = getUserId();
     if (opts.json !== undefined) {
       init.body = JSON.stringify(opts.json);
       init.headers["Content-Type"] = "application/json";
@@ -466,7 +477,7 @@
     fd.append("file", file);
     $("#resumeName").textContent = "Reading " + file.name + "...";
     try {
-      const r = await fetch("/api/resume", { method: "POST", body: fd });
+      const r = await fetch("/api/resume", { method: "POST", body: fd, headers: { "X-User-Id": getUserId() } });
       const data = await r.json();
       if (!r.ok) throw new Error(data.detail || r.status);
       fillProfile(data.profile);
