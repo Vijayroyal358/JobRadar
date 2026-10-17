@@ -121,7 +121,15 @@ def put_ai_settings(data: dict = Body(...)):
 @app.post("/api/ai/test")
 def ai_test(data: dict = Body(default={})):
     try:
-        return ai.test_connection(data.get("provider"))
+        return ai.test_connection(data.get("provider"), client_ai=data)
+    except ai.AIError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/ai/models")
+def ai_models(data: dict = Body(default={})):
+    try:
+        return ai.fetch_models(data.get("provider"), client_ai=data)
     except ai.AIError as e:
         raise HTTPException(400, str(e))
 
@@ -129,7 +137,7 @@ def ai_test(data: dict = Body(default={})):
 @app.post("/api/jobs/{job_id}/tailor")
 def tailor_resume(job_id: int, data: dict = Body(default={})):
     try:
-        return tailor.tailor_job(job_id, data.get("provider"))
+        return tailor.tailor_job(job_id, data.get("provider"), client_ai=data)
     except (tailor.TailorError, ai.AIError) as e:
         raise HTTPException(400, str(e))
     except Exception as e:

@@ -127,9 +127,7 @@
         <h2>AI resume tailoring</h2>
         <span id="aiState" class="pill src">Not set up</span>
       </div>
-      <p class="muted small ai-intro">Add an API key, then use <b>Tailor resume</b> on any job. The AI rewrites your summary, skills and
-        experience bullets to match that job description and keeps your resume's layout. Keys are stored only in the local
-        <code>data</code> folder.</p>
+      <p class="muted small ai-intro">Add your private API key to tailor resumes. <b>Your key is stored only in your browser's local storage</b> (never shared with other users or server visitors). Tokens are charged only to your personal account.</p>
 
       <div class="field">
         <label>Provider used for tailoring</label>
@@ -146,7 +144,10 @@
           <div class="key-actions"><button id="aiKeyRemove" class="btn ghost small danger-text hidden" type="button">Remove saved key</button></div>
         </div>
         <div class="field">
-          <label>Model</label>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <label style="margin:0">Model</label>
+            <button id="btnAiFetchModels" class="btn ghost small" type="button" style="padding:2px 8px;font-size:11px">Fetch available models</button>
+          </div>
           <input id="aiModel" type="text" list="aiModelList" autocomplete="off" placeholder="Model name">
           <datalist id="aiModelList"></datalist>
         </div>
@@ -160,7 +161,7 @@
       <div id="aiTestResult" class="callout hidden"></div>
       <div class="row2 ai-actions">
         <button id="btnAiTest" class="btn">Test connection</button>
-        <button id="btnAiSave" class="btn primary">Save AI settings</button>
+        <button id="btnAiSave" class="btn primary">Save in browser</button>
       </div>
 
       <details class="sub">

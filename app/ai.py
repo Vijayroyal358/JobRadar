@@ -11,27 +11,27 @@ from . import db
 PROVIDERS = {
     "anthropic": {
         "label": "Claude",
-        "default_model": "claude-opus-5-5",
-        "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+        "default_model": "claude-3-5-sonnet-20241022",
+        "models": ["claude-3-5-sonnet-20241022", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
         "key_hint": "sk-ant-...",
         "needs_base_url": False,
-        "help": "Create a key at console.anthropic.com. Claude Opus 5.5 gives the best rewrites.",
+        "help": "Create a key at console.anthropic.com. Claude Sonnet gives fast, high-quality rewrites.",
     },
     "openai": {
         "label": "OpenAI",
-        "default_model": "gpt-4.1",
-        "models": ["gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-5"],
+        "default_model": "gpt-4o",
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3-mini"],
         "key_hint": "sk-...",
         "needs_base_url": False,
-        "help": "Create a key at platform.openai.com. Any chat model works.",
+        "help": "Create a key at platform.openai.com. Any chat completion model works.",
     },
     "codecraft": {
         "label": "Codecraft",
-        "default_model": "",
-        "models": [],
+        "default_model": "claude-sonnet-5",
+        "models": ["claude-sonnet-5", "claude-opus-5", "claude-haiku-5", "gpt-4o", "deepseek-chat"],
         "key_hint": "API key from your Codecraft account",
         "needs_base_url": True,
-        "help": "Codecraft or any other OpenAI-compatible endpoint. Enter the base URL (ending in /v1) and the model name.",
+        "help": "Codecraft or any OpenAI-compatible proxy. Provide base URL (e.g. ending in /v1) and your model name.",
     },
 }
 DEFAULT_PROVIDER = "anthropic"
@@ -48,7 +48,7 @@ def _key(provider, field):
 
 
 def get_settings():
-    """Full settings including raw keys. Only for server-side use."""
+    """Full settings including raw keys. Only for server-side fallback."""
     out = {"provider": db.get_setting("ai.provider", DEFAULT_PROVIDER), "providers": {}}
     for p, meta in PROVIDERS.items():
         out["providers"][p] = {
@@ -61,37 +61,16 @@ def get_settings():
     return out
 
 
-def _is_ready(s, provider):
-    v = s["providers"].get(provider) or {}
-    if not v.get("api_key") or not v.get("model"):
-        return False
-    if PROVIDERS[provider]["needs_base_url"] and not v.get("base_url"):
-        return False
-    return True
-
-
 def public_settings():
-    """Settings safe to send to the browser: keys are masked to their last four characters."""
-    s = get_settings()
-    out = {"provider": s["provider"], "providers": {}, "catalog": PROVIDERS}
-    for p, v in s["providers"].items():
-        k = v["api_key"]
-        out["providers"][p] = {
-            "has_key": bool(k),
-            "key_mask": ("••••" + k[-4:]) if len(k) >= 8 else ("••••" if k else ""),
-            "model": v["model"],
-            "base_url": v["base_url"],
-            "ready": _is_ready(s, p),
-        }
-    out["ready"] = _is_ready(s, s["provider"])
-    return out
+    """Catalog and defaults safe for public clients. Never leaks secret keys."""
+    return {
+        "provider": db.get_setting("ai.provider", DEFAULT_PROVIDER),
+        "catalog": PROVIDERS,
+    }
 
 
 def save_settings(data):
-    """data: {provider?, providers?: {name: {api_key?, model?, base_url?}}}.
-
-    An empty api_key string means "keep the saved key"; null means "remove it".
-    """
+    """Server-side save (optional for self-hosted single users)."""
     if "provider" in data:
         if data["provider"] not in PROVIDERS:
             raise AIError("Unknown provider")
@@ -111,21 +90,78 @@ def save_settings(data):
     return public_settings()
 
 
-def resolve(provider=None):
-    """Return (provider, api_key, model, base_url) for the chosen or default provider, or raise AIError."""
-    s = get_settings()
-    provider = provider or s["provider"]
+def resolve(provider=None, client_ai=None):
+    """Return (provider, api_key, model, base_url), prioritizing client-provided credentials."""
+    client_ai = client_ai or {}
+    provider = client_ai.get("provider") or provider or db.get_setting("ai.provider", DEFAULT_PROVIDER)
+    if provider not in PROVIDERS:
+        raise AIError(f"Unknown provider: {provider}")
+    label = PROVIDERS[provider]["label"]
+    meta = PROVIDERS[provider]
+
+    if client_ai:
+        key = (client_ai.get("api_key") or "").strip()
+        model = (client_ai.get("model") or "").strip() or meta.get("default_model", "")
+        base_url = (client_ai.get("base_url") or "").strip().rstrip("/")
+    else:
+        # Fallback to server database only when no client_ai was provided
+        key = db.get_setting(_key(provider, "api_key"), "") or ""
+        model = db.get_setting(_key(provider, "model"), "") or meta["default_model"]
+        base_url = (db.get_setting(_key(provider, "base_url"), "") or "").rstrip("/")
+
+    if not key:
+        raise AIError(f"No API key provided for {label}. Add your API key under AI settings in the sidebar.")
+    if not model:
+        raise AIError(f"No model set for {label}. Enter a model name under AI settings.")
+    if meta["needs_base_url"] and not base_url:
+        raise AIError(f"{label} needs a base URL (for example https://api.example.com/v1).")
+    return provider, key, model, base_url
+
+
+def fetch_models(provider=None, client_ai=None):
+    """Fetch available models dynamically from provider using the client's credentials."""
+    client_ai = client_ai or {}
+    provider = client_ai.get("provider") or provider or DEFAULT_PROVIDER
     if provider not in PROVIDERS:
         raise AIError("Unknown provider")
-    v = s["providers"][provider]
     label = PROVIDERS[provider]["label"]
-    if not v["api_key"]:
-        raise AIError(f"No API key saved for {label}. Add one under AI settings in the sidebar.")
-    if not v["model"]:
-        raise AIError(f"No model set for {label}. Enter a model name under AI settings.")
-    if PROVIDERS[provider]["needs_base_url"] and not v["base_url"]:
-        raise AIError(f"{label} needs a base URL (for example https://api.example.com/v1).")
-    return provider, v["api_key"], v["model"], v["base_url"]
+    meta = PROVIDERS[provider]
+
+    if client_ai:
+        key = (client_ai.get("api_key") or "").strip()
+        base_url = (client_ai.get("base_url") or "").strip().rstrip("/")
+    else:
+        key = db.get_setting(_key(provider, "api_key"), "") or ""
+        base_url = (db.get_setting(_key(provider, "base_url"), "") or "").rstrip("/")
+
+    if not key:
+        raise AIError(f"Enter your API key for {label} first to fetch available models.")
+    if meta["needs_base_url"] and not base_url:
+        raise AIError(f"{label} needs a base URL to fetch available models.")
+
+    models = []
+    if provider == "anthropic":
+        import anthropic
+        client = anthropic.Anthropic(api_key=key, timeout=20)
+        try:
+            resp = client.models.list()
+            models = [m.id for m in resp.data]
+        except Exception:
+            models = list(meta.get("models") or [])
+    else:
+        import openai
+        client = openai.OpenAI(api_key=key, base_url=base_url or None, timeout=20)
+        try:
+            resp = client.models.list()
+            models = sorted([m.id for m in resp.data])
+        except openai.AuthenticationError:
+            raise AIError(f"{label} rejected the API key.")
+        except Exception as e:
+            raise AIError(f"Could not fetch models from {label}: {e}")
+
+    if not models:
+        models = list(meta.get("models") or [])
+    return {"ok": True, "provider": provider, "models": models}
 
 
 # ---------------------------------------------------------------- JSON completion
@@ -146,9 +182,9 @@ def _parse_json(text):
     raise AIError("The AI returned something that is not valid JSON. Try again or pick another model.")
 
 
-def complete_json(system, user, schema, provider=None, max_tokens=16000):
+def complete_json(system, user, schema, provider=None, client_ai=None, max_tokens=16000):
     """Send one prompt and get back a JSON object matching `schema`. Returns (data, provider, model)."""
-    provider, key, model, base_url = resolve(provider)
+    provider, key, model, base_url = resolve(provider, client_ai=client_ai)
     if provider == "anthropic":
         data = _anthropic_json(key, model, system, user, schema, max_tokens)
     else:
@@ -240,13 +276,13 @@ def _openai_json(key, model, base_url, system, user, schema, provider):
     return _parse_json(choice.message.content)
 
 
-def test_connection(provider=None):
+def test_connection(provider=None, client_ai=None):
     """Make the smallest possible request to confirm the key, model and URL work."""
     schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"],
               "additionalProperties": False}
-    data, provider, model = complete_json("You answer with JSON only.", 'Reply with {"ok": true}', schema, provider,
-                                          max_tokens=64)
+    data, provider, model = complete_json("You answer with JSON only.", 'Reply with {"ok": true}', schema,
+                                          provider=provider, client_ai=client_ai, max_tokens=64)
     if not isinstance(data, dict) or data.get("ok") is not True:
         raise AIError("The provider answered, but not with the expected JSON.")
     return {"ok": True, "provider": provider, "model": model,
-            "message": f"{PROVIDERS[provider]['label']} works with model {model}."}
+            "message": f"{PROVIDERS[provider]['label']} connected successfully with model {model}."}

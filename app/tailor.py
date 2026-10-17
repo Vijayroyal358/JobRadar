@@ -241,20 +241,20 @@ def _safe_name(s, n=40):
 
 
 # ---------------------------------------------------------------- entry point
-def tailor_job(job_id, provider=None):
+def tailor_job(job_id, provider=None, client_ai=None):
     """Tailor the saved resume to job `job_id`. Returns the stored tailored record (with changes)."""
     with _inflight_lock:
         if job_id in _inflight:
             raise TailorError("This job is already being tailored. Give it a moment.")
         _inflight.add(job_id)
     try:
-        return _tailor(job_id, provider)
+        return _tailor(job_id, provider, client_ai=client_ai)
     finally:
         with _inflight_lock:
             _inflight.discard(job_id)
 
 
-def _tailor(job_id, provider):
+def _tailor(job_id, provider, client_ai=None):
     job = db.get_job(job_id)
     if not job:
         raise TailorError("Job not found")
@@ -263,7 +263,7 @@ def _tailor(job_id, provider):
     profile = db.get_profile()
     kind, segs, handle = load_segments(profile)
     system, user = build_prompt(job, segs, profile)
-    raw, used_provider, model = ai.complete_json(system, user, SCHEMA, provider)
+    raw, used_provider, model = ai.complete_json(system, user, SCHEMA, provider, client_ai=client_ai)
     if not isinstance(raw, dict):
         raise TailorError("The AI returned an unexpected response.")
     changes = _filter_changes(raw, segs)

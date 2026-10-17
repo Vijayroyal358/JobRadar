@@ -130,14 +130,68 @@
     if (b) showPanel(b.dataset.panel);
   });
 
-  // ------------------------------------------------------------ AI settings (API keys, provider, model)
+  // ------------------------------------------------------------ AI settings (Per-user browser storage)
+  const AI_STORAGE_KEY = "jr_user_ai_v1";
   const AI = { settings: null, provider: "anthropic", draft: {} };
+
+  function loadLocalAi() {
+    try {
+      return JSON.parse(localStorage.getItem(AI_STORAGE_KEY) || "{}");
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveLocalAi() {
+    try {
+      localStorage.setItem(AI_STORAGE_KEY, JSON.stringify({
+        provider: AI.provider,
+        draft: AI.draft,
+      }));
+    } catch (_) {}
+  }
+
+  function isProviderReady(p) {
+    if (!AI.settings || !AI.settings.catalog || !AI.settings.catalog[p]) return false;
+    const meta = AI.settings.catalog[p];
+    const d = (AI.draft && AI.draft[p]) || {};
+    const hasKey = Boolean((d.api_key || "").trim());
+    const hasModel = Boolean((d.model || "").trim());
+    if (!hasKey || !hasModel) return false;
+    if (meta.needs_base_url && !Boolean((d.base_url || "").trim())) return false;
+    return true;
+  }
+
+  function isAiReady() {
+    return isProviderReady(AI.provider);
+  }
+
+  function getActiveAiCreds() {
+    const p = AI.provider;
+    const d = (AI.draft && AI.draft[p]) || {};
+    return {
+      provider: p,
+      api_key: (d.api_key || "").trim(),
+      model: (d.model || "").trim(),
+      base_url: (d.base_url || "").trim(),
+    };
+  }
 
   async function loadAiSettings() {
     AI.settings = await api("/api/ai/settings");
-    AI.provider = AI.settings.provider;
+    const local = loadLocalAi();
+    AI.provider = local.provider && AI.settings.catalog[local.provider] ? local.provider : (AI.settings.provider || "anthropic");
     AI.draft = {};
-    for (const [p, v] of Object.entries(AI.settings.providers)) AI.draft[p] = { api_key: "", model: v.model, base_url: v.base_url };
+    for (const [p, meta] of Object.entries(AI.settings.catalog)) {
+      const lp = (local.draft && local.draft[p]) || {};
+      AI.draft[p] = {
+        api_key: lp.api_key || "",
+        model: lp.model || meta.default_model || "",
+        base_url: lp.base_url || "",
+        models: lp.models || meta.models || [],
+      };
+    }
+    AI.settings.ready = isAiReady();
     renderAi();
   }
 
@@ -146,23 +200,27 @@
   function renderAi() {
     if (!AI.settings) return;
     const cat = AI.settings.catalog;
+    AI.settings.ready = isAiReady();
     $("#aiProviderTabs").innerHTML = Object.entries(cat).map(([k, m]) =>
-      `<button type="button" data-p="${k}" class="${k === AI.provider ? "on" : ""}">${esc(m.label)}${AI.settings.providers[k].ready ? '<i class="ok" title="Key saved"></i>' : ""}</button>`).join("");
-    const m = cat[AI.provider], v = AI.settings.providers[AI.provider], d = AI.draft[AI.provider];
+      `<button type="button" data-p="${k}" class="${k === AI.provider ? "on" : ""}">${esc(m.label)}${isProviderReady(k) ? '<i class="ok" title="Saved locally in browser"></i>' : ""}</button>`).join("");
+    const m = cat[AI.provider], d = AI.draft[AI.provider] || { api_key: "", model: "", base_url: "", models: [] };
     const key = $("#aiKey");
     key.value = d.api_key || "";
-    key.placeholder = v.has_key ? `Saved ${v.key_mask}. Paste a new key to replace it.` : m.key_hint;
-    $("#aiKeyStatus").textContent = v.has_key ? `saved ${v.key_mask}` : "not saved";
-    $("#aiKeyRemove").classList.toggle("hidden", !v.has_key);
+    const hasKey = Boolean((d.api_key || "").trim());
+    const mask = hasKey ? ("••••" + d.api_key.trim().slice(-4)) : "";
+    key.placeholder = hasKey ? `Saved in browser (${mask})` : m.key_hint;
+    $("#aiKeyStatus").textContent = hasKey ? `saved in your browser (${mask})` : "not saved";
+    $("#aiKeyRemove").classList.toggle("hidden", !hasKey);
     $("#aiModel").value = d.model || "";
     $("#aiModel").placeholder = m.default_model || "e.g. model-name";
-    $("#aiModelList").innerHTML = (m.models || []).map((x) => `<option value="${esc(x)}">`).join("");
+    const availModels = (d.models && d.models.length) ? d.models : (m.models || []);
+    $("#aiModelList").innerHTML = availModels.map((x) => `<option value="${esc(x)}">`).join("");
     $("#aiBaseUrlField").classList.toggle("hidden", !m.needs_base_url);
     $("#aiBaseUrl").value = d.base_url || "";
     $("#aiHelp").textContent = m.help || "";
-    const ready = AI.settings.ready;
+    const ready = isAiReady();
     const st = $("#aiState");
-    st.textContent = ready ? `Ready · ${aiLabel(AI.settings.provider)}` : "Not set up";
+    st.textContent = ready ? `Ready · ${aiLabel(AI.provider)}` : "Key required";
     st.className = "pill " + (ready ? "High" : "src");
     $("#aiNavDot").classList.toggle("hidden", ready);
   }
@@ -171,67 +229,97 @@
     const b = e.target.closest("button[data-p]");
     if (!b) return;
     AI.provider = b.dataset.p;
+    saveLocalAi();
     $("#aiTestResult").classList.add("hidden");
     renderAi();
   });
-  $("#aiKey").addEventListener("input", (e) => { AI.draft[AI.provider].api_key = e.target.value; });
-  $("#aiModel").addEventListener("input", (e) => { AI.draft[AI.provider].model = e.target.value; });
-  $("#aiBaseUrl").addEventListener("input", (e) => { AI.draft[AI.provider].base_url = e.target.value; });
+  $("#aiKey").addEventListener("input", (e) => {
+    if (!AI.draft[AI.provider]) AI.draft[AI.provider] = {};
+    AI.draft[AI.provider].api_key = e.target.value;
+  });
+  $("#aiModel").addEventListener("input", (e) => {
+    if (!AI.draft[AI.provider]) AI.draft[AI.provider] = {};
+    AI.draft[AI.provider].model = e.target.value;
+  });
+  $("#aiBaseUrl").addEventListener("input", (e) => {
+    if (!AI.draft[AI.provider]) AI.draft[AI.provider] = {};
+    AI.draft[AI.provider].base_url = e.target.value;
+  });
   $("#aiKeyToggle").addEventListener("click", () => {
     const k = $("#aiKey");
     k.type = k.type === "password" ? "text" : "password";
     $("#aiKeyToggle").innerHTML = icon(k.type === "password" ? "eye" : "eyeoff");
   });
-  $("#aiKeyRemove").addEventListener("click", async () => {
-    if (!confirm(`Remove the saved ${aiLabel(AI.provider)} API key?`)) return;
-    try {
-      const prov = AI.provider;
-      await api("/api/ai/settings", { method: "PUT", json: { providers: { [prov]: { api_key: null } } } });
-      toast("API key removed.");
-      await loadAiSettings();
-      AI.provider = prov; renderAi();
-    } catch (e) { toast(e.message, true); }
+  $("#aiKeyRemove").addEventListener("click", () => {
+    if (!confirm(`Remove your saved ${aiLabel(AI.provider)} API key from this browser?`)) return;
+    if (AI.draft[AI.provider]) {
+      AI.draft[AI.provider].api_key = "";
+    }
+    saveLocalAi();
+    toast(`Removed ${aiLabel(AI.provider)} key from browser.`);
+    renderAi();
+    if (S.current) renderDrawer(S.current);
   });
 
-  function aiPayload() {
-    const providers = {};
-    for (const [p, d] of Object.entries(AI.draft)) {
-      providers[p] = { model: d.model, base_url: d.base_url };
-      if ((d.api_key || "").trim()) providers[p].api_key = d.api_key.trim();
-    }
-    return { provider: AI.provider, providers };
-  }
-
-  async function saveAiSettings(quiet = false) {
-    const btn = $("#btnAiSave");
-    btn.disabled = true;
-    try {
-      const prov = AI.provider;
-      AI.settings = await api("/api/ai/settings", { method: "PUT", json: aiPayload() });
-      for (const p of Object.keys(AI.draft)) AI.draft[p].api_key = "";
-      AI.provider = prov;
-      renderAi();
-      if (!quiet) toast(AI.settings.ready ? `AI settings saved. Tailoring uses ${aiLabel(AI.settings.provider)}.` : "AI settings saved. Add an API key to enable tailoring.");
-      if (S.current) renderDrawer(S.current);
-      return true;
-    } catch (e) {
-      toast("Could not save: " + e.message, true);
-      return false;
-    } finally { btn.disabled = false; }
+  function saveAiSettings(quiet = false) {
+    saveLocalAi();
+    const ready = isAiReady();
+    renderAi();
+    if (!quiet) toast(ready ? `Settings saved in your browser. Tailoring uses ${aiLabel(AI.provider)}.` : "Settings saved in browser. Add an API key to enable tailoring.");
+    if (S.current) renderDrawer(S.current);
+    return true;
   }
   $("#btnAiSave").addEventListener("click", () => saveAiSettings());
+
   $("#btnAiTest").addEventListener("click", async () => {
     const btn = $("#btnAiTest"), out = $("#aiTestResult");
-    if (!(await saveAiSettings(true))) return;
+    saveAiSettings(true);
+    const creds = getActiveAiCreds();
+    if (!creds.api_key) {
+      toast("Please enter your API key first.", true);
+      return;
+    }
     btn.disabled = true; btn.textContent = "Testing...";
     out.className = "callout"; out.textContent = `Contacting ${aiLabel(AI.provider)}...`;
+    out.classList.remove("hidden");
     try {
-      const r = await api("/api/ai/test", { method: "POST", json: { provider: AI.provider } });
+      const r = await api("/api/ai/test", { method: "POST", json: creds });
       out.className = "callout ok"; out.textContent = r.message;
     } catch (e) {
       out.className = "callout bad"; out.textContent = e.message;
     } finally { btn.disabled = false; btn.textContent = "Test connection"; }
   });
+
+  const btnFetch = $("#btnAiFetchModels");
+  if (btnFetch) {
+    btnFetch.addEventListener("click", async () => {
+      saveAiSettings(true);
+      const creds = getActiveAiCreds();
+      if (!creds.api_key) {
+        toast("Please enter your API key first to fetch models.", true);
+        return;
+      }
+      btnFetch.disabled = true; btnFetch.textContent = "Fetching...";
+      try {
+        const r = await api("/api/ai/models", { method: "POST", json: creds });
+        if (r.models && r.models.length) {
+          AI.draft[AI.provider].models = r.models;
+          if (!AI.draft[AI.provider].model || !r.models.includes(AI.draft[AI.provider].model)) {
+            AI.draft[AI.provider].model = r.models[0];
+          }
+          saveLocalAi();
+          renderAi();
+          toast(`Loaded ${r.models.length} models for ${aiLabel(AI.provider)}.`);
+        } else {
+          toast("No models returned by provider.", true);
+        }
+      } catch (e) {
+        toast("Could not fetch models: " + e.message, true);
+      } finally {
+        btnFetch.disabled = false; btnFetch.textContent = "Fetch available models";
+      }
+    });
+  }
 
   // ------------------------------------------------------------ profile UI
   function markDirty() {
@@ -662,7 +750,7 @@
       </div>
       <div class="tl-actions">
         <button class="btn ai" data-tl="run" ${S.tailoring === j.id ? "disabled" : ""}>${icon("sparkles")}${S.tailoring === j.id ? "Tailoring..." : (j.tailored && j.tailored.length ? "Tailor again" : "Tailor resume to this job")}</button>
-        <span class="muted small">${AI.settings && AI.settings.ready ? `Uses ${esc(aiLabel(AI.settings.provider))} · ${esc(AI.settings.providers[AI.settings.provider].model)}` : "Add an API key under AI settings first"}</span>
+        <span class="muted small">${isAiReady() ? `Uses ${esc(aiLabel(AI.provider))} · ${esc((AI.draft[AI.provider] || {}).model || "")}` : "Add an API key under AI settings first"}</span>
       </div>
       ${tailorSection(j)}
       ${j.excluded ? `<div class="callout bad">Excluded from matches: ${esc(j.exclude_reason || "")}</div>` : ""}
@@ -792,8 +880,8 @@
       toast("Upload your resume first, then tailor it to a job.", true);
       showPanel("profile"); return;
     }
-    if (!AI.settings || !AI.settings.ready) {
-      toast("Add an API key under AI settings to tailor your resume.", true);
+    if (!isAiReady()) {
+      toast("Add your API key under AI settings to tailor your resume.", true);
       showPanel("ai"); return;
     }
     if (S.tailoring) { toast("Another resume is being tailored. Wait for it to finish.", true); return; }
@@ -803,7 +891,7 @@
     S.current.tailorError = null;
     renderDrawer(S.current);
     try {
-      const rec = await api(`/api/jobs/${id}/tailor`, { method: "POST", json: {} });
+      const rec = await api(`/api/jobs/${id}/tailor`, { method: "POST", json: getActiveAiCreds() });
       S.tailoring = null;
       if (S.current && S.current.id === id) {
         S.current.tailorView = rec;
@@ -999,11 +1087,12 @@
   $("#btnTailorSel").addEventListener("click", async () => {
     const ids = [...S.selected];
     if (!ids.length) return;
-    if (!AI.settings || !AI.settings.ready) { toast("Add an API key under AI settings first.", true); showPanel("ai"); return; }
+    if (!isAiReady()) { toast("Add your API key under AI settings first.", true); showPanel("ai"); return; }
     if (!confirm(`Tailor your resume for ${ids.length} job(s) one after another? Each takes 20 to 60 seconds.`)) return;
+    const creds = getActiveAiCreds();
     let ok = 0;
     for (const id of ids) {
-      try { await api(`/api/jobs/${id}/tailor`, { method: "POST", json: {} }); ok++; toast(`Tailored ${ok} of ${ids.length}`); }
+      try { await api(`/api/jobs/${id}/tailor`, { method: "POST", json: creds }); ok++; toast(`Tailored ${ok} of ${ids.length}`); }
       catch (e) { toast("Tailoring failed for one job: " + e.message, true); }
     }
     loadJobs(true);
