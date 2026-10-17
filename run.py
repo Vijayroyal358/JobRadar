@@ -27,6 +27,15 @@ def venv_python():
     return VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+def in_container():
+    return bool(
+        os.environ.get("DOCKER_CONTAINER") or
+        os.environ.get("RAILWAY_ENVIRONMENT") or
+        os.environ.get("PORT") or
+        os.path.exists("/.dockerenv")
+    )
+
+
 def in_venv():
     return Path(sys.prefix).resolve() == VENV.resolve()
 
@@ -98,11 +107,11 @@ def open_when_ready():
 
 
 def main():
-    if not in_venv():
+    if not in_container() and not in_venv():
         py = ensure_env()
         sys.exit(subprocess.call([str(py), str(ROOT / "run.py")] + sys.argv[1:]))
 
-    if server_alive():
+    if not in_container() and server_alive():
         print(f"JobRadar is already running. Opening {URL}")
         webbrowser.open(URL)
         return
@@ -111,10 +120,10 @@ def main():
     sys.path.insert(0, str(ROOT))
     import uvicorn
 
-    if "--no-browser" not in sys.argv:
+    if not in_container() and "--no-browser" not in sys.argv:
         threading.Thread(target=open_when_ready, daemon=True).start()
-    print(f"\n  JobRadar is running at {URL}\n  Keep this window open while you use it. Close it to stop.\n")
-    uvicorn.run("app.main:app", host=HOST, port=PORT, log_level="warning")
+    print(f"\n  JobRadar is running on {HOST}:{PORT}\n")
+    uvicorn.run("app.main:app", host=HOST, port=PORT, log_level="info")
 
 
 if __name__ == "__main__":
