@@ -528,9 +528,25 @@
 
   // ------------------------------------------------------------ scraping
   async function startSearch() {
-    if (S.dirty) await saveProfile();
+    if (S.dirty) {
+      try {
+        await saveProfile();
+      } catch (e) {
+        console.warn("Auto-saving profile before search:", e);
+      }
+    }
+    const currentProfile = S.draft || S.profile || {};
+    const roles = (currentProfile.target_roles || []).filter(Boolean);
+    if (!roles.length && !currentProfile.current_title && !(currentProfile.suggested_roles || []).length) {
+      toast("Add at least one target role (or upload your resume) before searching.", true);
+      return;
+    }
     try {
-      await api("/api/scrape", { method: "POST", json: {} });
+      const body = {
+        sources: currentProfile.sources || [],
+        profile: currentProfile
+      };
+      await api("/api/scrape", { method: "POST", json: body });
       S.running = true;
       setRunningUI(true);
       poll();

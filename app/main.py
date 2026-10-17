@@ -287,9 +287,13 @@ def apply_screenshot(name: str):
 
 # ---------------------------------------------------------------- scraping
 @app.post("/api/scrape")
-def scrape(data: dict = Body(default={})):
+def scrape(request: Request, data: dict = Body(default={})):
+    user_id = _get_user_id(request)
+    profile = db.get_profile(user_id=user_id)
+    if data.get("profile") and isinstance(data["profile"], dict):
+        profile.update({k: v for k, v in data["profile"].items() if v is not None})
     try:
-        ok = engine.start_scrape(data.get("sources"))
+        ok = engine.start_scrape(data.get("sources"), user_id=user_id, profile=profile)
     except ValueError as e:
         raise HTTPException(400, str(e))
     if not ok:
@@ -311,8 +315,9 @@ def scrape_status():
 
 
 @app.post("/api/rescore")
-def rescore():
-    return {"rescored": engine.rescore_all()}
+def rescore(request: Request):
+    user_id = _get_user_id(request)
+    return {"rescored": engine.rescore_all(user_id=user_id)}
 
 
 # ---------------------------------------------------------------- jobs

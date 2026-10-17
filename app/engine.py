@@ -74,11 +74,12 @@ def _is_relevant(score, sctx):
     return n >= 2 or (n == 1 and b["role"] >= 45) or (not score["matched_skills"] and b["role"] >= 70)
 
 
-def start_scrape(sources=None):
+def start_scrape(sources=None, user_id="default", profile=None):
     with _state_lock:
         if STATE["running"]:
             return False
-    profile = db.get_profile()
+    if profile is None:
+        profile = db.get_profile(user_id=user_id)
     keys = [k for k in (sources or profile.get("sources") or []) if k in BY_KEY]
     queries = build_queries(profile)
     if not queries:
@@ -91,7 +92,7 @@ def start_scrape(sources=None):
         STATE.update(running=True, run_id=run_id, started_at=iso(now_utc()), finished_at=None, log=[], queries=queries,
                      sources={k: {"label": BY_KEY[k].label, "state": "queued", "scanned": 0, "relevant": 0, "new": 0,
                                   "progress": 0.0, "message": ""} for k in keys})
-    threading.Thread(target=_run_all, args=(profile, keys, queries, run_id), daemon=True).start()
+    threading.Thread(target=_run_all, args=(profile, keys, queries, run_id, user_id), daemon=True).start()
     return True
 
 
@@ -100,7 +101,7 @@ def stop_scrape():
     _log("Stop requested. Finishing current requests...")
 
 
-def _run_all(profile, keys, queries, run_id):
+def _run_all(profile, keys, queries, run_id, user_id="default"):
     _log(f"Searching for: {', '.join(queries)}")
     sctx = ScoringContext(profile)
     prioritize = _prioritizer(sctx)
@@ -150,7 +151,7 @@ def _run_all(profile, keys, queries, run_id):
         with ThreadPoolExecutor(max_workers=len(keys)) as ex:
             list(ex.map(run_one, keys))
         db.purge_old()
-        rescore_all()
+        rescore_all(user_id=user_id, profile=profile)
     finally:
         st = status()
         summary = {k: {kk: v.get(kk) for kk in ("state", "scanned", "relevant", "new", "message")}
@@ -162,8 +163,9 @@ def _run_all(profile, keys, queries, run_id):
         _log("Search finished.")
 
 
-def rescore_all():
-    profile = db.get_profile()
+def rescore_all(user_id="default", profile=None):
+    if profile is None:
+        profile = db.get_profile(user_id=user_id)
     sctx = ScoringContext(profile)
     jobs = db.all_jobs_for_scoring()
     db.save_scores((j["id"], score_job(j, sctx)) for j in jobs)

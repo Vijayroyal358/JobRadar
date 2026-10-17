@@ -132,6 +132,12 @@ def test_user_isolation():
     ap_b = client.get("/api/apply/profile", headers={"x-user-id": uid_b}).json()["profile"]
     assert ap_b.get("email") != "alice@test.com"
 
+    # 7. Scrape initiation uses the caller's target roles and does not fail with "Add at least one target role"
+    uid_c = "user_test_charlie_789"
+    client.put("/api/profile", json={"target_roles": ["HR / L&D OPERATIONS", "Operations Executive"], "sources": ["remotive"]}, headers={"x-user-id": uid_c})
+    resp_scrape = client.post("/api/scrape", json={"sources": ["remotive"]}, headers={"x-user-id": uid_c})
+    assert resp_scrape.status_code in (200, 409), f"Expected 200 or 409, got {resp_scrape.status_code}: {resp_scrape.text}"
+
     print("User candidate isolation self-checks passed!")
 
 
