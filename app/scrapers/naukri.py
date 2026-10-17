@@ -88,8 +88,29 @@ class Naukri(Scraper):
         with sync_playwright() as p:
             browser = _launch(p, headless)
             context = browser.new_context(user_agent=UA, viewport={"width": 1366, "height": 900}, locale="en-IN")
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                window.navigator.chrome = { runtime: {} };
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en-US', 'en'] });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            """)
             page = context.new_page()
-            page.route(re.compile(r"\.(png|jpg|jpeg|gif|webp|woff2?|ttf|svg)(\?|$)"), lambda r: r.abort())
+            page.route(re.compile(r"\.(png|jpg|jpeg|gif|webp)(\?|$)"), lambda r: r.abort())
+
+            captured = {}
+
+            def on_response(resp):
+                if "jobapi/v3/search" in resp.url:
+                    if resp.status == 406:
+                        captured["captcha"] = True
+                    elif resp.status == 200:
+                        try:
+                            captured["data"] = resp.json()
+                        except Exception:
+                            pass
+
+            page.on("response", on_response)
+
             try:
                 for q, loc in plan:
                     for n in range(1, pages + 1):
@@ -103,17 +124,22 @@ class Naukri(Scraper):
                             url += f"&l={quote(loc)}"
                         if years not in (None, ""):
                             url += f"&experience={int(float(years))}"
-                        data = None
+                        
+                        captured.clear()
                         try:
-                            with page.expect_response(lambda r: "jobapi/v3/search" in r.url, timeout=30000) as info:
-                                page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                            resp = info.value
-                            if resp.status == 406:
-                                captcha_hits += 1
-                            else:
-                                data = resp.json()
+                            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                            # Wait up to 6s for the background search API response
+                            for _ in range(30):
+                                if "data" in captured or "captcha" in captured or ctx.stopped:
+                                    break
+                                page.wait_for_timeout(200)
                         except Exception as e:
-                            ctx.log(f"Naukri page timed out for '{q}' page {n}: {str(e)[:80]}")
+                            ctx.log(f"Naukri page error for '{q}' page {n}: {str(e)[:80]}")
+
+                        if captured.get("captcha"):
+                            captcha_hits += 1
+
+                        data = captured.get("data")
                         done += 1
                         ctx.progress(done, total)
                         if captcha_hits >= 3:
@@ -129,7 +155,7 @@ class Naukri(Scraper):
                         if len(jobs) < 20:
                             done += pages - n
                             break
-                        page.wait_for_timeout(1200)
+                        page.wait_for_timeout(1000)
             finally:
                 browser.close()
         ctx.log(f"Naukri: {len(seen)} postings")
