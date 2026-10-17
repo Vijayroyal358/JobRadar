@@ -3,20 +3,39 @@ import io
 import re
 from datetime import datetime
 
-from .skills import extract_skills, suggest_roles
+from .skills import extract_skills, suggest_roles, canonicalize, SKILL_CATEGORY
 
 TITLE_WORDS = re.compile(
     r"\b(engineer|developer|analyst|manager|administrator|admin|consultant|specialist|lead|architect|tester|"
     r"programmer|designer|scientist|technician|executive|associate|officer|intern|support|devops|sre|sdet|"
-    r"head|director|coordinator|owner|master|expert|professional|trainee)\b", re.I)
+    r"head|director|coordinator|owner|master|expert|trainee|operations|generalist|recruiter)\b", re.I)
 
-EXP_HEAD = re.compile(r"^\s*(work\s+experience|professional\s+experience|experience|employment(\s+history)?|"
-                      r"work\s+history|career\s+(history|summary)|professional\s+background|relevant\s+experience)\s*:?\s*$",
-                      re.I)
-OTHER_HEAD = re.compile(r"^\s*(education(al)?(\s+(background|qualifications?|details))?|academic(s|\s+\w+)?|qualifications?|"
-                        r"certifications?|projects?|academic\s+projects|skills|technical\s+skills|key\s+skills|"
-                        r"achievements|awards|languages|hobbies|interests|personal\s+(details|information)|declaration|"
-                        r"trainings?|publications|references)\s*:?\s*$", re.I)
+SECTION_HEAD_EXCL = re.compile(
+    r"\b(summary|objective|education|academic|experience|history|skills|competencies|projects|certifications|awards|hobbies|declaration)\b",
+    re.I
+)
+
+EXP_HEAD = re.compile(
+    r"^\s*(?:[a-z0-9&/+\- ]+\s+)?(?:work\s+experience|professional\s+experience|experience|employment(?:\s+history)?|"
+    r"work\s+history|career\s+(?:history|summary)|professional\s+background|relevant\s+experience)\s*:?\s*$",
+    re.I
+)
+
+SKILL_HEAD = re.compile(
+    r"^\s*(?:core\s+)?(?:[a-z0-9&/+\- ]+\s+)?(?:competencies|skills|technical\s+skills|soft\s+skills|"
+    r"key\s+skills|core\s+competencies|areas\s+of\s+expertise|functional\s+skills|tools\s*(?:&|and)\s*technologies)\s*:?\s*$",
+    re.I
+)
+
+OTHER_HEAD = re.compile(
+    r"^\s*(education(al)?(\s+(background|qualifications?|details))?|academic(s|\s+\w+)?|qualifications?|"
+    r"certifications?|projects?|academic\s+projects|skills|technical\s+skills|key\s+skills|"
+    r"achievements|awards|languages|hobbies|interests|personal\s+(details|information)|declaration|"
+    r"trainings?|publications|references|(?:core\s+)?(?:[a-z0-9&/+\- ]+\s+)?competencies)\s*:?\s*$",
+    re.I
+)
+
+BULLET_SPLIT = re.compile(r"[\u2022\u00b7|;\t\uf0a7\u25aa\u25cf\u25cb\u25a0•]+")
 
 MON = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
        r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)")
@@ -145,16 +164,25 @@ def estimate_years(text: str):
 
 def guess_title(text: str) -> str:
     m = re.search(r"(?:current\s+)?(?:designation|position|role|title)\s*[:\-]\s*([^\n|]{3,70})", text, re.I)
-    if m and TITLE_WORDS.search(m.group(1)):
+    if m and TITLE_WORDS.search(m.group(1)) and not SECTION_HEAD_EXCL.search(m.group(1)):
         return m.group(1).strip(" ,.-")
+    # Check lines right below candidate name (lines 1 to 5) for target role / headline
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    for l in lines[1:6]:
+        if SECTION_HEAD_EXCL.search(l) or EDU_LINE.search(l) or "@" in l or RANGE.search(l):
+            continue
+        for chunk in re.split(r"\s{2,}|\||,|\s-\s", l):
+            c = chunk.strip(" ,.-:")
+            if 3 <= len(c) <= 60 and TITLE_WORDS.search(c) and not SECTION_HEAD_EXCL.search(c):
+                return c
     section = _experience_section(text)
     for l in _lines(section)[:15]:
         for chunk in re.split(r"\s{2,}|\||,|\s-\s|\bat\b", l):
             c = chunk.strip(" ,.-:")
-            if 3 <= len(c) <= 60 and TITLE_WORDS.search(c) and not RANGE.search(c) and not EDU_LINE.search(c):
+            if 3 <= len(c) <= 60 and TITLE_WORDS.search(c) and not RANGE.search(c) and not EDU_LINE.search(c) and not SECTION_HEAD_EXCL.search(c):
                 return c
     for l in _lines(text)[1:10]:
-        if 3 <= len(l) <= 70 and TITLE_WORDS.search(l) and "@" not in l and not EDU_LINE.search(l):
+        if 3 <= len(l) <= 70 and TITLE_WORDS.search(l) and "@" not in l and not EDU_LINE.search(l) and not SECTION_HEAD_EXCL.search(l):
             return re.split(r"\s{2,}|\|", l)[0].strip(" ,.-")
     return ""
 
@@ -168,11 +196,77 @@ def guess_name(text: str) -> str:
     return ""
 
 
+def _clean_skill_candidate(s: str) -> str:
+    s = s.strip(" ,.-:;•·\"'")
+    if not s or len(s) < 2 or len(s) > 50:
+        return ""
+    if re.fullmatch(r"[\d.\-/\s]+", s):
+        return ""
+    canon = canonicalize(s)
+    if canon in SKILL_CATEGORY:
+        return canon
+    base = re.sub(r"\s*\([^)]*\)", "", s).strip()
+    if base and base != s:
+        canon_base = canonicalize(base)
+        if canon_base in SKILL_CATEGORY:
+            return canon_base
+    words = s.split()
+    if len(words) > 4:
+        return ""
+    if " and " in s.lower():
+        return ""
+    if any(w.lower() in ("basic", "for", "with", "using", "etc", "e.g", "such", "as", "including", "various") for w in words[:1]):
+        return ""
+    if "/" in s and not re.search(r"\b(l&d|ui/ux|ci/cd|tcp/ip|pl/sql|c/c\+\+)\b", s, re.I):
+        return ""
+    return s.title() if s.islower() else s
+
+
+def extract_section_skills(text: str) -> set:
+    lines = [l.strip() for l in text.splitlines()]
+    found = set()
+    in_section = False
+    for l in lines:
+        if not l:
+            continue
+        if SKILL_HEAD.match(l):
+            in_section = True
+            continue
+        if in_section and (OTHER_HEAD.match(l) or (len(l) < 35 and l.isupper() and len(l.split()) <= 4 and not SKILL_HEAD.match(l))):
+            in_section = False
+            continue
+        if in_section:
+            clean_l = re.sub(r"^[\uf0a7\u25aa\u25cf\u25cb\u25a0•\-*\d.]+\s*", "", l)
+            if ":" in clean_l:
+                pre, _, post = clean_l.partition(":")
+                ck = _clean_skill_candidate(pre)
+                if ck:
+                    found.add(ck)
+                # Also extract known skills from any descriptive post-colon text (e.g. 'Basic reporting and MS Word')
+                for sk in extract_skills(post):
+                    found.add(sk)
+                clean_l = post
+            if BULLET_SPLIT.search(clean_l):
+                chunks = BULLET_SPLIT.split(clean_l)
+            elif "," in clean_l and len(clean_l.split(",")) >= 2:
+                chunks = clean_l.split(",")
+            else:
+                chunks = [clean_l]
+            for c in chunks:
+                c = re.sub(r"^[\uf0a7\u25aa\u25cf\u25cb\u25a0•\-*\d.]+\s*", "", c)
+                ck = _clean_skill_candidate(c)
+                if ck:
+                    found.add(ck)
+    return found
+
+
 def parse_resume(filename: str, data: bytes) -> dict:
     text = extract_text(filename, data)
     if len(text) < 80:
         raise ValueError("Could not read text from this file. If it is a scanned image PDF, export it as a text PDF or DOCX.")
-    skills = sorted(extract_skills(text))
+    skills = set(extract_skills(text))
+    skills.update(extract_section_skills(text))
+    sorted_skills = sorted(skills)
     years, method = estimate_years(text)
     title = guess_title(text)
     return {
@@ -180,7 +274,7 @@ def parse_resume(filename: str, data: bytes) -> dict:
         "current_title": title,
         "years_experience": years,
         "years_method": method,
-        "skills": skills,
-        "suggested_roles": suggest_roles(skills),
+        "skills": sorted_skills,
+        "suggested_roles": suggest_roles(sorted_skills),
         "text": text,
     }

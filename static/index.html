@@ -66,14 +66,20 @@
       <div class="field">
         <label>Skills <span id="skillCount" class="muted small"></span></label>
         <div class="chips editable" id="skillsChips"></div>
-        <input id="skillInput" list="skillList" type="text" placeholder="Add a skill and press Enter">
+        <div class="chip-input-wrap">
+          <input id="skillInput" list="skillList" type="text" placeholder="Add a skill and tap ➔" enterkeyhint="done" autocomplete="off" autocapitalize="words">
+          <button type="button" class="btn-chip-add" id="btnAddSkill" title="Add skill" aria-label="Add skill">➔</button>
+        </div>
         <datalist id="skillList"></datalist>
       </div>
 
       <div class="field">
         <label>Target roles <span class="muted small">used as search keywords</span></label>
         <div class="chips editable" id="rolesChips"></div>
-        <input id="roleInput" list="roleList" type="text" placeholder="Add a role and press Enter">
+        <div class="chip-input-wrap">
+          <input id="roleInput" list="roleList" type="text" placeholder="Add a role and tap ➔" enterkeyhint="done" autocomplete="off" autocapitalize="words">
+          <button type="button" class="btn-chip-add" id="btnAddRole" title="Add role" aria-label="Add role">➔</button>
+        </div>
         <datalist id="roleList"></datalist>
         <div class="chips suggest" id="roleSuggest"></div>
       </div>
@@ -81,7 +87,10 @@
       <div class="field">
         <label>Search locations</label>
         <div class="chips editable" id="locChips"></div>
-        <input id="locInput" type="text" placeholder="City or country, press Enter">
+        <div class="chip-input-wrap">
+          <input id="locInput" type="text" placeholder="City or country, tap ➔" enterkeyhint="done" autocomplete="off" autocapitalize="words">
+          <button type="button" class="btn-chip-add" id="btnAddLoc" title="Add location" aria-label="Add location">➔</button>
+        </div>
       </div>
 
       <div class="row2">

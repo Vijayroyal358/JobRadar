@@ -342,22 +342,28 @@
   function chipEditor(listKey, containerSel, inputSel, { canonical } = {}) {
     const box = $(containerSel);
     const input = $(inputSel);
+    const wrap = input ? input.closest(".chip-input-wrap") : null;
+    const addBtn = wrap ? wrap.querySelector(".btn-chip-add") : null;
+
     const render = () => {
       const arr = S.draft[listKey] || [];
       box.innerHTML = arr.map((v, i) => `<span class="chip">${esc(v)}<button data-i="${i}" title="Remove">×</button></span>`).join("");
       if (listKey === "skills") $("#skillCount").textContent = arr.length ? `${arr.length}` : "";
       if (listKey === "target_roles") renderRoleSuggest();
     };
+
     box.addEventListener("click", (e) => {
       const b = e.target.closest("button[data-i]");
       if (!b) return;
       S.draft[listKey].splice(+b.dataset.i, 1);
       render(); markDirty();
     });
+
     const add = (raw) => {
+      if (!raw) return;
       raw.split(",").map((x) => x.trim()).filter(Boolean).forEach((v) => {
         if (canonical) {
-          const hit = S.meta.skills.find((s) => s.toLowerCase() === v.toLowerCase());
+          const hit = (S.meta?.skills || []).find((s) => s.toLowerCase() === v.toLowerCase());
           if (hit) v = hit;
         }
         const arr = S.draft[listKey] = S.draft[listKey] || [];
@@ -366,15 +372,45 @@
       input.value = "";
       render(); markDirty();
     };
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && input.value.trim()) { e.preventDefault(); add(input.value); }
-    });
-    input.addEventListener("change", () => {
-      // Selecting from the datalist fires change; add immediately when it's an exact option.
+
+    const commitInput = () => {
       const v = input.value.trim();
-      const list = listKey === "skills" ? S.meta.skills : listKey === "target_roles" ? S.meta.roles : [];
-      if (v && list.some((x) => x.toLowerCase() === v.toLowerCase())) add(v);
+      if (v) {
+        add(v);
+      }
+    };
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.keyCode === 13 || e.which === 13) {
+        e.preventDefault();
+        commitInput();
+      }
     });
+
+    input.addEventListener("keyup", (e) => {
+      if (e.key === "Enter" || e.keyCode === 13 || e.which === 13) {
+        e.preventDefault();
+        commitInput();
+      }
+    });
+
+    input.addEventListener("change", () => {
+      commitInput();
+    });
+
+    if (addBtn) {
+      addBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        commitInput();
+        input.focus();
+      });
+      addBtn.addEventListener("touchend", (e) => {
+        e.preventDefault();
+        commitInput();
+        input.focus();
+      });
+    }
+
     return { render, add };
   }
 
