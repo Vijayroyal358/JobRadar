@@ -31,10 +31,16 @@ def launch_browser(p, headless=True):
         "--disable-dev-shm-usage",
         "--disable-gpu",
     ]
+    # headless=False forces Playwright to use the full Chrome/Chromium binary instead of
+    # chromium-headless-shell. The headless shell is easily fingerprinted by sites like Naukri.
+    # We then pass --headless=new so Chrome runs without any display (works in Docker/Railway).
+    if headless:
+        args.append("--headless=new")
+
     last = None
     for channel in ("chrome", "msedge", None):
         try:
-            kw = {"headless": headless, "args": args}
+            kw = {"headless": False, "args": args}
             if channel:
                 kw["channel"] = channel
             return p.chromium.launch(**kw)
